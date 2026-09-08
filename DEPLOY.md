@@ -88,10 +88,14 @@ entirely — the app reaches it over the compose network either way.
 
 ## 4. Start it
 
+Pick an overlay once and record it in `./.env`, so every later command is just
+`docker compose ...`:
+
 **With a domain (full TLS):**
 
 ```bash
-docker compose --profile tls up -d --build
+echo 'COMPOSE_FILE=docker-compose.yml:docker-compose.tls.yml' >> .env
+docker compose up -d --build
 docker compose logs -f caddy    # watch the certificate get issued
 ```
 
@@ -104,8 +108,12 @@ password problem: secure cookies are never sent over HTTP, so the admin login
 accepts your credentials and silently bounces back to the login form.
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.http.yml up -d --build
+echo 'COMPOSE_FILE=docker-compose.yml:docker-compose.http.yml' >> .env
+docker compose up -d --build
 ```
+
+`DOMAIN` and `ACME_EMAIL` are not needed in this mode and the base file no
+longer references them — Caddy lives entirely in `docker-compose.tls.yml`.
 
 The bot still works completely in this mode — long-polling dials out to
 Telegram, so nothing needs to reach the server. Only the webhook, the Mini App

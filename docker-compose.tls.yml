@@ -1,0 +1,52 @@
+# HTTPS overlay. Adds Caddy in front of the frontend nginx.
+#
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.tls.yml
+#   docker compose up -d --build
+#
+# Kept out of the base file rather than behind a profile: Compose interpolates
+# required variables (${DOMAIN:?}) for every service it can see, whether or not
+# that service is being started, and it does so differently across patch
+# releases — v5.5.0 tolerated it, v5.5.1 refused. A file that isn't loaded
+# cannot be interpolated, which is the only version-proof answer.
+#
+# DNS must already point at this host before the first `up`: Caddy proves
+# control of the domain over port 80, and premature failures burn a Let's
+# Encrypt rate limit.
+services:
+  # TLS termination. Obtains and renews a Let's Encrypt certificate for the
+  # configured domain automatically. Needed for Telegram webhook mode, the Mini
+  # App, and payment IPN callbacks — none of which accept plain HTTP. The bot
+  # itself does NOT need it: long-polling dials out to Telegram and works with
+  # no inbound URL at all.
+  #
+  # Port 80 stays open on purpose — it is the ACME HTTP-01 challenge and the
+  # http->https redirect, not a way in.
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    # Spelled out rather than an anchor: YAML anchors do not cross files, so
+    # *default-logging from the base compose file is not in scope here.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN in .env beside this file}
+      ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL in .env beside this file}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # Certificates live here. Lose this volume and every restart re-requests
+      # from Let's Encrypt, which will rate-limit you.
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - frontend
+
+volumes:
+  caddy-data:
+  caddy-config:

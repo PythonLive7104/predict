@@ -10,12 +10,13 @@
 #   API_FOOTBALL_KEY / ANTHROPIC_API_KEY / TELEGRAM_* / NOWPAYMENTS_*
 # And beside this file, in ./.env (NOT backend/.env):
 #   POSTGRES_DB / POSTGRES_USER / POSTGRES_PASSWORD
-#   DOMAIN=your-domain.com          # Caddy requests a certificate for this
-#   ACME_EMAIL=you@example.com      # Let's Encrypt expiry notices
 #
-# DNS must already point at this host before the first `up` — Caddy proves
-# control of the domain over port 80, and a premature attempt burns a
-# Let's Encrypt rate limit.
+# This file alone serves nothing to the internet — pick an overlay:
+#   docker-compose.http.yml   publishes the frontend on :80 (no TLS, IP-only)
+#   docker-compose.tls.yml    adds Caddy for automatic HTTPS (needs a domain)
+#
+# Set COMPOSE_FILE in ./.env so you don't repeat -f on every command:
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.http.yml
 #
 # NOTE: backend/.env's DATABASE_URL is IGNORED here — compose supplies its own,
 # pointing at the in-cluster `postgres` service. The hostname in that URL is the
@@ -96,38 +97,6 @@ services:
     depends_on:
       - web
 
-  # TLS termination. Obtains and renews a Let's Encrypt certificate for the
-  # configured domain automatically. Needed for Telegram webhook mode, the Mini
-  # App, and payment IPN callbacks — none of which accept plain HTTP. The bot
-  # itself does NOT need it: long-polling dials out to Telegram and works with
-  # no inbound URL at all.
-  #
-  # Port 80 stays open on purpose — it is the ACME HTTP-01 challenge and the
-  # http->https redirect, not a way in.
-  caddy:
-    image: caddy:2-alpine
-    # Only starts with `--profile tls`. Let's Encrypt will not issue a
-    # certificate for a bare IP address, so an IP-only deploy runs without it
-    # and publishes the frontend directly (see docker-compose.http.yml).
-    profiles: ["tls"]
-    restart: unless-stopped
-    logging: *default-logging
-    ports:
-      - "80:80"
-      - "443:443"
-      - "443:443/udp"
-    environment:
-      DOMAIN: ${DOMAIN:?set DOMAIN in .env beside this file}
-      ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL in .env beside this file}
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      # Certificates live here. Lose this volume and every restart re-requests
-      # from Let's Encrypt, which will rate-limit you.
-      - caddy-data:/data
-      - caddy-config:/config
-    depends_on:
-      - frontend
-
   # Fixture sync, prediction generation, settlement, broadcasts. Beat is embedded
   # (-B) rather than run as a fourth container — one schedule, one process.
   worker:
@@ -144,5 +113,3 @@ services:
 volumes:
   db-data:
   redis-data:
-  caddy-data:
-  caddy-config:
