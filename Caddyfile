@@ -29,7 +29,8 @@ www.{$DOMAIN} {
 	# between the SPA bundle and the proxied /api, /hooks, /admin, /static.
 	# Keeping that split in one place means the Mini App, the web app and the
 	# webhooks stay on a single origin — which Telegram requires.
-	reverse_proxy frontend:80 {
-		header_up X-Forwarded-Proto {scheme}
-	}
+	# No header_up needed: Caddy sets X-Forwarded-Proto itself, and nginx is
+	# configured to pass it through rather than overwrite it with its own
+	# (plaintext) $scheme.
+	reverse_proxy frontend:80
 }
