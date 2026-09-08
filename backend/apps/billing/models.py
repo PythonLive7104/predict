@@ -129,6 +129,10 @@ class Payment(TimeStampedModel):
     class Status(models.TextChoices):
         PENDING = "pending", "Pending"
         CONFIRMING = "confirming", "Confirming"
+        # Manual rail: the user has submitted a hash and an admin must verify it
+        # on a block explorer before anything is granted.
+        REVIEW = "review", "Awaiting review"
+        REJECTED = "rejected", "Rejected"
         PAID = "paid", "Paid"
         PARTIAL = "partial", "Partially paid"
         FAILED = "failed", "Failed"
@@ -154,8 +158,67 @@ class Payment(TimeStampedModel):
     # Full IPN body kept verbatim — the only defence in a chargeback-style dispute.
     raw = models.JSONField(default=dict, blank=True)
 
+    # --- Manual rail -------------------------------------------------------
+    # The user pays a wallet directly and submits the transaction hash; an admin
+    # verifies it on a block explorer and approves. Nothing is granted on
+    # submission — the same rule the IPN rail follows, with a human in the place
+    # of the signature.
+    tx_hash = models.CharField(
+        max_length=128, blank=True, db_index=True,
+        help_text="Transaction hash as submitted by the user.",
+    )
+    wallet_address = models.CharField(
+        max_length=128, blank=True, help_text="The address the user was shown."
+    )
+    submitted_at = models.DateTimeField(null=True, blank=True)
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    reviewed_by = models.BigIntegerField(
+        null=True, blank=True, help_text="Telegram id of the admin who decided."
+    )
+    review_note = models.CharField(max_length=255, blank=True)
+
     class Meta:
         ordering = ["-created_at"]
+        constraints = [
+            # A transaction hash is public — anyone can read one off a block
+            # explorer and paste it in. Uniqueness is the difference between a
+            # manual rail and a free-plan generator. Scoped to non-empty so the
+            # IPN rail, which has no hash, is unaffected.
+            models.UniqueConstraint(
+                fields=["tx_hash"],
+                condition=models.Q(tx_hash__gt=""),
+                name="uniq_payment_tx_hash",
+            )
+        ]
 
     def __str__(self) -> str:
         return f"{self.user} — {self.plan.code} — {self.status}"
+
+
+class ReceivingWallet(TimeStampedModel):
+    """
+    An address the owner accepts payment on.
+
+    Kept in the database rather than settings so the owner can rotate an address
+    or add a network without a redeploy — the addresses are the one piece of
+    configuration whose owner is not a developer.
+    """
+
+    label = models.CharField(max_length=64, help_text="Shown to the user, e.g. 'USDT (TRC-20)'")
+    currency = models.CharField(max_length=16, help_text="usdt, btc …")
+    network = models.CharField(max_length=32, blank=True, help_text="TRC20, ERC20, BTC …")
+    address = models.CharField(max_length=128)
+    # Where an admin should go to verify a hash paid to this address. Rendered
+    # into the approval message so nobody has to remember which explorer covers
+    # which chain.
+    explorer_url = models.URLField(
+        blank=True, help_text="Base URL for a transaction, e.g. https://tronscan.org/#/transaction/"
+    )
+    is_active = models.BooleanField(default=True, db_index=True)
+    sort_order = models.IntegerField(default=0)
+
+    class Meta:
+        ordering = ["sort_order", "label"]
+
+    def __str__(self) -> str:
+        return f"{self.label} — {self.address[:12]}…"

@@ -143,9 +143,22 @@ Credits are a **ledger** (`CreditEntry`), not a mutable counter — `Wallet.bala
 is a cache the ledger can rebuild. Disputes in this niche are constant ("the bot
 ate my credits") and only a ledger settles them.
 
-Payments are crypto (NOWPayments primary, Cryptomus fallback). A plan is granted
-**only** from a signature-verified IPN (`apps/bot/webhooks.py` → `settle_payment`),
-never from the client claiming it paid. Settlement is idempotent — providers retry
+Payments are crypto. The live rail is **manual** (`apps/billing/manual.py`): the
+owner publishes wallet addresses (`ReceivingWallet`, admin-editable so an address
+can rotate without a redeploy), the user pays directly and submits the
+transaction hash, and an admin in `TELEGRAM_ADMIN_IDS` approves from a Telegram
+notification. NOWPayments remains wired for a signed-IPN rail when a public
+HTTPS callback exists.
+
+The invariant is the same on both rails: **a plan is granted only on approval,
+never because the user says they paid.** What a signature does on the IPN rail, a
+human does here. Two things keep that honest — `Payment.tx_hash` is unique
+(a hash is public; anyone can copy one off a block explorer, and without the
+constraint that is a free-plan generator), and `approve()` takes
+`select_for_update` so two admins tapping Approve on the same notification grant
+one subscription, not two. Approval is one-way: `reject()` refuses to touch a
+payment already marked PAID, because reversing a grant is a refund decision, not
+a status flip. Settlement is idempotent — providers retry
 IPNs, and `Payment.status == PAID` is the lock. Renewals extend from the current
 expiry, not from now, so renewing early loses nothing.
 

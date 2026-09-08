@@ -76,3 +76,15 @@ def unlock_keyboard(prediction_id: int, credits: int = 1) -> InlineKeyboardMarku
             [InlineKeyboardButton(text="💳 Go unlimited", callback_data="menu:purchase")],
         ]
     )
+
+
+def review_keyboard(payment_id: int) -> InlineKeyboardMarkup:
+    """Admin-only. Sent alongside a submitted hash so approval is one tap."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="✅ Approve", callback_data=f"pay:ok:{payment_id}"),
+                InlineKeyboardButton(text="❌ Reject", callback_data=f"pay:no:{payment_id}"),
+            ]
+        ]
+    )

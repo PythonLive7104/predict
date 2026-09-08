@@ -36,9 +36,12 @@ def get_bot() -> Bot:
 def get_dispatcher() -> Dispatcher:
     global _dispatcher
     if _dispatcher is None:
-        from .handlers import menu, picks, purchase
+        from .handlers import admin, menu, picks, purchase
 
         _dispatcher = Dispatcher()
+        # Admin first: its callback filter is narrow, and `purchase` ends with a
+        # broad hash-shaped message filter that should only see what is left.
+        _dispatcher.include_router(admin.router)
         _dispatcher.include_router(menu.router)
         _dispatcher.include_router(picks.router)
         _dispatcher.include_router(purchase.router)

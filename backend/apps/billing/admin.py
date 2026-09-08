@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import CreditEntry, Payment, Plan, Subscription, Wallet
+from .models import ReceivingWallet, CreditEntry, Payment, Plan, Subscription, Wallet
 
 
 @admin.register(Plan)
@@ -33,3 +33,12 @@ class WalletAdmin(admin.ModelAdmin):
 class CreditEntryAdmin(admin.ModelAdmin):
     list_display = ("wallet", "amount", "reason", "balance_after", "created_at")
     list_filter = ("reason",)
+
+
+@admin.register(ReceivingWallet)
+class ReceivingWalletAdmin(admin.ModelAdmin):
+    """The owner edits these; no redeploy needed to rotate an address."""
+
+    list_display = ("label", "currency", "network", "address", "is_active", "sort_order")
+    list_editable = ("is_active", "sort_order")
+    search_fields = ("label", "address")

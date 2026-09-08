@@ -77,3 +77,61 @@ def set_notifications(user: User, enabled: bool) -> bool:
     user.notifications_enabled = enabled
     user.save(update_fields=["notifications_enabled"])
     return enabled
+
+
+# --- Manual crypto rail ---------------------------------------------------
+
+@sync_to_async
+def receiving_wallets() -> list:
+    from apps.billing.manual import active_wallets
+
+    return active_wallets()
+
+
+@sync_to_async
+def open_manual_payment(user: User, plan):
+    from apps.billing.manual import open_payment
+
+    return open_payment(user, plan)
+
+
+@sync_to_async
+def submit_tx_hash(user: User, tx_hash: str) -> tuple:
+    from apps.billing.manual import submit_hash
+
+    payment, status = submit_hash(user, tx_hash)
+    if payment is None:
+        return None, status
+    # Flattened here because the handler is async and must not touch the ORM:
+    # every related field it needs is resolved while we are still in a thread.
+    return {
+        "id": payment.pk,
+        "plan": payment.plan.name,
+        "amount": str(payment.amount_usd),
+        "tx_hash": payment.tx_hash,
+        "user_id": payment.user.telegram_id,
+        "username": payment.user.telegram_username or "",
+    }, status
+
+
+@sync_to_async
+def decide_payment(payment_id: int, admin_id: int, approved: bool) -> tuple:
+    from apps.billing.manual import approve, reject
+
+    payment, status = (approve if approved else reject)(payment_id, admin_id)
+    if payment is None:
+        return None, status
+    return {
+        "id": payment.pk,
+        "plan": payment.plan.name,
+        "amount": str(payment.amount_usd),
+        "user_id": payment.user.telegram_id,
+        "username": payment.user.telegram_username or "",
+    }, status
+
+
+@sync_to_async
+def pending_review_count() -> int:
+    from apps.billing.models import Payment
+
+    return Payment.objects.filter(status=Payment.Status.REVIEW).count()
