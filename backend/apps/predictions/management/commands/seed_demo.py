@@ -11,6 +11,7 @@ the warning in `manage.py backtest`). Use it to exercise the UI, never to judge
 the engine.
 """
 
+from django.conf import settings
 from django.core.management.base import BaseCommand
 
 
@@ -97,10 +98,7 @@ class Command(BaseCommand):
                     )
 
         stats = ratings.refresh_all()
-        self.stdout.write(f"ratings: applied {stats['elo_applied']} results, rated {stats['teams_updated']} teams\n")
-        self.stdout.write(f"{'TEAM':<14}{'ELO':>7}{'ATT':>7}{'DEF':>7}")
-        for t in Team.objects.order_by("-elo"):
-            self.stdout.write(f"{t.name:<14}{t.elo:>7.0f}{t.attack_strength:>7.2f}{t.defence_strength:>7.2f}")
+        self._report_ratings(epl, stats)
 
         # --- today's slate --------------------------------------------------------
         TODAY = [
@@ -127,7 +125,78 @@ class Command(BaseCommand):
         generated = generate_daily_predictions(days_ahead=1)
         published = publish_daily()
         slips = build_slips()
-        self.stdout.write(f"\ngenerated {generated} predictions -> {published} -> slips: {[s.title for s in slips]}")
-
+        self._report_slate(generated, published, slips)
 
         self.stdout.write(self.style.SUCCESS("Demo data seeded."))
+
+    # --- output ---------------------------------------------------------------
+    #
+    # These ratings are engine internals — nothing here reaches a user, who sees
+    # only "Man City or Draw, 86%". But whoever seeds reads this table every
+    # time, and two things about it are genuinely easy to misread: the strengths
+    # are ratios against the league average rather than goal counts, and a good
+    # defence is a *small* number. Both are spelled out rather than assumed.
+
+    def _report_ratings(self, league, stats: dict) -> None:
+        # Imported here rather than at module scope, matching `handle` — the
+        # engine pulls in numpy/scipy and this is a dev-only command.
+        from apps.fixtures.models import Team
+        from apps.predictions.engine import ratings
+
+        avg = ratings.league_average_goals(league)
+        home_avg, away_avg = ratings.league_venue_averages(league)
+
+        self.stdout.write("")
+        self.stdout.write(
+            self.style.MIGRATE_HEADING(
+                f"Ratings — {stats['elo_applied']} results applied to "
+                f"{stats['teams_updated']} teams"
+            )
+        )
+        self.stdout.write(
+            f"  League baseline: {avg:.2f} goals per team per game "
+            f"(home {home_avg:.2f}, away {away_avg:.2f} — that gap is home advantage)"
+        )
+        self.stdout.write("")
+        self.stdout.write(
+            f"  {'TEAM':<15}{'ELO':>5}  {'ATTACK':<26}{'DEFENCE':<26}"
+        )
+        self.stdout.write(
+            f"  {'':<15}{'':>5}  {'(1.0 = average)':<26}{'(lower is better)':<26}"
+        )
+        self.stdout.write(f"  {'-' * 72}")
+
+        for team in Team.objects.order_by("-elo"):
+            attack = f"{team.attack_strength:.2f}  {self._vs_average(team.attack_strength, 'scores')}"
+            defence = f"{team.defence_strength:.2f}  {self._vs_average(team.defence_strength, 'concedes')}"
+            self.stdout.write(
+                f"  {team.name[:14]:<15}{team.elo:>5.0f}  {attack:<26}{defence:<26}"
+            )
+
+    @staticmethod
+    def _vs_average(ratio: float, verb: str) -> str:
+        """'1.49' on its own means nothing to most readers; '+49%' does."""
+        delta = round((ratio - 1.0) * 100)
+        if abs(delta) < 3:
+            return "about average"
+        return f"{verb} {abs(delta)}% {'more' if delta > 0 else 'fewer'}"
+
+    def _report_slate(self, generated: int, published: dict, slips: list) -> None:
+        self.stdout.write("")
+        self.stdout.write(self.style.MIGRATE_HEADING("Today's slate"))
+        held_back = generated - published["total"]
+        self.stdout.write(
+            f"  Priced {generated} predictions, published {published['total']} "
+            f"({published['free']} free, {published['vip']} VIP)."
+        )
+        if held_back > 0:
+            # Not an error: the confidence gate doing its job.
+            self.stdout.write(
+                f"  {held_back} stayed unpublished — below the "
+                f"{settings.MIN_PUBLISH_CONFIDENCE}% confidence gate."
+            )
+        if slips:
+            self.stdout.write("  Slips: " + ", ".join(s.title for s in slips))
+        else:
+            self.stdout.write("  No slips — a thin slate produces none rather than padding one.")
+        self.stdout.write("")
