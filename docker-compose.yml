@@ -22,6 +22,11 @@
 # service name below, so renaming one means renaming the other.
 name: predict
 
+# Process counts are env-tunable because the floor here is memory, not CPU:
+# every gunicorn worker and every celery process loads numpy and scipy, so each
+# one costs 150-250 MB. On a 1-2 GB host set GUNICORN_WORKERS=2 and
+# CELERY_CONCURRENCY=1 in the .env beside this file.
+
 x-backend-env: &backend-env
   REDIS_URL: redis://redis:6379/0
   DATABASE_URL: postgresql://${POSTGRES_USER:-predict}:${POSTGRES_PASSWORD:-predict}@postgres:5432/${POSTGRES_DB:-predict}
@@ -72,7 +77,7 @@ services:
     environment: *backend-env
     command: >
       sh -c "python manage.py migrate --noinput &&
-             gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 3"
+             gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers ${GUNICORN_WORKERS:-3} --timeout 120"
     expose:
       - "8000"
     depends_on:
@@ -131,7 +136,7 @@ services:
     logging: *default-logging
     env_file: ./backend/.env
     environment: *backend-env
-    command: celery -A config worker -B --loglevel=info --concurrency=2
+    command: celery -A config worker -B --loglevel=info --concurrency=${CELERY_CONCURRENCY:-2}
     depends_on:
       postgres: {condition: service_healthy}
       redis: {condition: service_started}
