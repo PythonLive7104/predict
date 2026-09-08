@@ -1,0 +1,21 @@
+# Automatic HTTPS. Caddy obtains and renews a Let's Encrypt certificate for
+# $DOMAIN on its own, which is the whole reason it is here: Telegram will not
+# call a webhook that is plain HTTP or self-signed, and the Mini App will not
+# load over anything but valid TLS.
+#
+# DOMAIN and ACME_EMAIL come from the .env beside docker-compose.yml.
+{
+	email {$ACME_EMAIL}
+}
+
+{$DOMAIN} {
+	encode gzip
+
+	# Everything goes to the frontend nginx, which owns the routing split
+	# between the SPA bundle and the proxied /api, /hooks, /admin, /static.
+	# Keeping that split in one place means the Mini App, the web app and the
+	# webhooks stay on a single origin — which Telegram requires.
+	reverse_proxy frontend:80 {
+		header_up X-Forwarded-Proto {scheme}
+	}
+}

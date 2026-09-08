@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+.venv/
+# Every env file stays local. The compose-level one carries the database
+# password; backend/.env carries the OpenAI, Telegram and API-Football keys.
+# Only the .example files are tracked.
+.env
+backend/.env
+!.env.example
+backend/db.sqlite3
+backend/staticfiles/
+backend/celerybeat-schedule*
+.DS_Store
+node_modules/
+frontend/dist/

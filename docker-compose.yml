@@ -1,0 +1,137 @@
+# Predict — self-hosted stack (app + Postgres + Redis on one host).
+#
+#   docker compose up -d --build
+#
+# Before first deploy, set in backend/.env:
+#   DJANGO_DEBUG=False
+#   DJANGO_SECRET_KEY=<a long random value>
+#   DJANGO_ALLOWED_HOSTS=your-domain.com,your.server.ip
+#   FRONTEND_URL=https://your-domain.com
+#   API_FOOTBALL_KEY / ANTHROPIC_API_KEY / TELEGRAM_* / NOWPAYMENTS_*
+# And beside this file, in ./.env (NOT backend/.env):
+#   POSTGRES_DB / POSTGRES_USER / POSTGRES_PASSWORD
+#   DOMAIN=your-domain.com          # Caddy requests a certificate for this
+#   ACME_EMAIL=you@example.com      # Let's Encrypt expiry notices
+#
+# DNS must already point at this host before the first `up` — Caddy proves
+# control of the domain over port 80, and a premature attempt burns a
+# Let's Encrypt rate limit.
+#
+# NOTE: backend/.env's DATABASE_URL is IGNORED here — compose supplies its own,
+# pointing at the in-cluster `postgres` service. The hostname in that URL is the
+# service name below, so renaming one means renaming the other.
+name: predict
+
+x-backend-env: &backend-env
+  REDIS_URL: redis://redis:6379/0
+  DATABASE_URL: postgresql://${POSTGRES_USER:-predict}:${POSTGRES_PASSWORD:-predict}@postgres:5432/${POSTGRES_DB:-predict}
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    logging: *default-logging
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-predict}
+      POSTGRES_USER: ${POSTGRES_USER:-predict}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-predict}
+    ports:
+      # Host-only, so local dev and psql can reach the same database the stack
+      # uses. Bound to 127.0.0.1 DELIBERATELY — "5435:5432" would publish
+      # Postgres on every interface, which on a VPS means the open internet.
+      # 5432/5433/5434 are already taken by other projects on this machine.
+      - "127.0.0.1:5435:5432"
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-predict}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    logging: *default-logging
+    command: redis-server --save "" --appendonly no
+    volumes:
+      - redis-data:/data
+
+  # Serves the API, the admin, and both webhook endpoints.
+  web:
+    build: ./backend
+    restart: unless-stopped
+    logging: *default-logging
+    env_file: ./backend/.env
+    environment: *backend-env
+    command: >
+      sh -c "python manage.py migrate --noinput &&
+             gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 3"
+    expose:
+      - "8000"
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_started}
+
+  # The SPA + Mini App bundle, and the routing split between it and the backend.
+  # No longer published to the host — Caddy is the only thing on the internet, so
+  # X-Forwarded-Proto can be trusted by the time it reaches Django.
+  frontend:
+    build: ./frontend
+    restart: unless-stopped
+    logging: *default-logging
+    expose:
+      - "80"
+    depends_on:
+      - web
+
+  # TLS termination. Obtains and renews a Let's Encrypt certificate for $DOMAIN
+  # automatically; Telegram refuses plain-HTTP and self-signed webhooks, so
+  # without this the bot silently receives nothing.
+  #
+  # Port 80 stays open on purpose — it is the ACME HTTP-01 challenge and the
+  # http->https redirect, not a way in.
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    logging: *default-logging
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN in .env beside this file}
+      ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL in .env beside this file}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # Certificates live here. Lose this volume and every restart re-requests
+      # from Let's Encrypt, which will rate-limit you.
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - frontend
+
+  # Fixture sync, prediction generation, settlement, broadcasts. Beat is embedded
+  # (-B) rather than run as a fourth container — one schedule, one process.
+  worker:
+    build: ./backend
+    restart: unless-stopped
+    logging: *default-logging
+    env_file: ./backend/.env
+    environment: *backend-env
+    command: celery -A config worker -B --loglevel=info --concurrency=2
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_started}
+
+volumes:
+  db-data:
+  redis-data:
+  caddy-data:
+  caddy-config:
