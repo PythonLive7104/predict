@@ -4,8 +4,22 @@
 # load over anything but valid TLS.
 #
 # DOMAIN and ACME_EMAIL come from the .env beside docker-compose.yml.
+#
+# NOTE: the certificate is obtained over an HTTP-01 challenge on port 80, which
+# means Let's Encrypt must reach THIS server. Behind Cloudflare's orange cloud
+# it reaches Cloudflare instead and the challenge fails. Set the DNS records to
+# "DNS only" until the certificate is issued, then re-enable the proxy with
+# SSL/TLS mode "Full (strict)".
 {
 	email {$ACME_EMAIL}
+}
+
+# www redirects to the apex rather than serving a second copy. One canonical
+# origin matters here beyond tidiness: Telegram pins the Mini App and the
+# webhook to an exact host, and a session started on one hostname does not
+# carry to the other.
+www.{$DOMAIN} {
+	redir https://{$DOMAIN}{uri} permanent
 }
 
 {$DOMAIN} {
