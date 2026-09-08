@@ -7,6 +7,8 @@ through sync_to_async — aiogram runs in an event loop, Django's ORM does not.
 """
 
 import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
@@ -17,20 +19,40 @@ from django.conf import settings
 
 logger = logging.getLogger(__name__)
 
-_bot: Bot | None = None
+# The Dispatcher is cached; the Bot deliberately is not. See get_bot().
 _dispatcher: Dispatcher | None = None
 
 
 def get_bot() -> Bot:
-    global _bot
-    if _bot is None:
-        if not settings.TELEGRAM_BOT_TOKEN:
-            raise RuntimeError("TELEGRAM_BOT_TOKEN is not set")
-        _bot = Bot(
-            token=settings.TELEGRAM_BOT_TOKEN,
-            default=DefaultBotProperties(parse_mode=ParseMode.HTML),
-        )
-    return _bot
+    """
+    A NEW Bot every call. Never cache one across event loops.
+
+    A Bot owns an aiohttp ClientSession, and that session binds to whichever
+    event loop first uses it. Celery runs each task inside its own
+    `asyncio.run(...)`, which closes its loop when the task ends — so a cached
+    Bot's session belongs to a dead loop by the second task. The symptom is
+    precise and misleading: the first update after a worker starts is handled
+    normally, and every one after it fails with "Event loop is closed" while
+    Telegram still gets its 200 and never retries.
+
+    Callers own the session and must close it. Use `bot_session()`.
+    """
+    if not settings.TELEGRAM_BOT_TOKEN:
+        raise RuntimeError("TELEGRAM_BOT_TOKEN is not set")
+    return Bot(
+        token=settings.TELEGRAM_BOT_TOKEN,
+        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+    )
+
+
+@asynccontextmanager
+async def bot_session() -> AsyncIterator[Bot]:
+    """A Bot whose aiohttp session is closed with the loop that created it."""
+    bot = get_bot()
+    try:
+        yield bot
+    finally:
+        await bot.session.close()
 
 
 def get_dispatcher() -> Dispatcher:
@@ -49,8 +71,10 @@ def get_dispatcher() -> Dispatcher:
 
 
 async def feed_update(payload: dict) -> None:
-    bot = get_bot()
-    await get_dispatcher().feed_update(bot, Update.model_validate(payload, context={"bot": bot}))
+    async with bot_session() as bot:
+        await get_dispatcher().feed_update(
+            bot, Update.model_validate(payload, context={"bot": bot})
+        )
 
 
 async def deliver_broadcast(broadcast_id: int) -> int:
@@ -63,7 +87,6 @@ async def deliver_broadcast(broadcast_id: int) -> int:
 
     from .models import Broadcast, Delivery
 
-    bot = get_bot()
     broadcast = await sync_to_async(Broadcast.objects.get)(pk=broadcast_id)
 
     from .notifications import audience as build_audience
@@ -71,27 +94,30 @@ async def deliver_broadcast(broadcast_id: int) -> int:
     recipients = await sync_to_async(build_audience)(broadcast.target_tier)
 
     sent = failed = 0
-    async for user in recipients.aiterator():
-        delivery, created = await Delivery.objects.aget_or_create(
-            user=user, broadcast=broadcast
-        )
-        if not created and delivery.delivered:
-            continue
-        try:
-            message = await bot.send_message(user.telegram_id, broadcast.body)
-            delivery.message_id = message.message_id
-            delivery.delivered = True
-            sent += 1
-        except Exception as exc:
-            delivery.error = str(exc)
-            failed += 1
-            # Telegram reports a block/deactivation as a 403. Recording it is the
-            # only way is_blocked ever becomes true — never inferred from silence.
-            if "bot was blocked" in str(exc).lower() or "user is deactivated" in str(exc).lower():
-                user.is_blocked = True
-                await user.asave(update_fields=["is_blocked"])
-        await delivery.asave()
-        await asyncio.sleep(0.05)
+    async with bot_session() as bot:
+        async for user in recipients.aiterator():
+            delivery, created = await Delivery.objects.aget_or_create(
+                user=user, broadcast=broadcast
+            )
+            if not created and delivery.delivered:
+                continue
+            try:
+                message = await bot.send_message(user.telegram_id, broadcast.body)
+                delivery.message_id = message.message_id
+                delivery.delivered = True
+                sent += 1
+            except Exception as exc:
+                delivery.error = str(exc)
+                failed += 1
+                # Telegram reports a block/deactivation as a 403. Recording it is
+                # the only way is_blocked ever becomes true — never inferred
+                # from silence.
+                if ("bot was blocked" in str(exc).lower()
+                        or "user is deactivated" in str(exc).lower()):
+                    user.is_blocked = True
+                    await user.asave(update_fields=["is_blocked"])
+            await delivery.asave()
+            await asyncio.sleep(0.05)
 
     broadcast.sent_count, broadcast.failed_count = sent, failed
     broadcast.status = Broadcast.Status.SENT

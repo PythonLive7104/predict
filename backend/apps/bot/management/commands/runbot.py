@@ -15,16 +15,20 @@ class Command(BaseCommand):
     help = "Run the Telegram bot with long polling (development only)"
 
     def handle(self, *args, **options):
-        from apps.bot.dispatcher import get_bot, get_dispatcher
+        from apps.bot.dispatcher import bot_session, get_dispatcher
 
-        bot, dispatcher = get_bot(), get_dispatcher()
+        dispatcher = get_dispatcher()
         self.stdout.write(self.style.SUCCESS("Bot polling — Ctrl-C to stop"))
 
         async def run():
-            # Drop anything queued while the bot was down: replaying stale
-            # commands on restart confuses users more than losing them.
-            await bot.delete_webhook(drop_pending_updates=True)
-            await dispatcher.start_polling(bot)
+            # One long-lived loop here, unlike the Celery path — but the session
+            # is still opened and closed inside it, so the Bot never outlives
+            # the loop that owns its connections.
+            async with bot_session() as bot:
+                # Drop anything queued while the bot was down: replaying stale
+                # commands on restart confuses users more than losing them.
+                await bot.delete_webhook(drop_pending_updates=True)
+                await dispatcher.start_polling(bot)
 
         try:
             asyncio.run(run())
