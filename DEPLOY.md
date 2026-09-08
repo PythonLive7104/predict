@@ -70,6 +70,12 @@ Generate the secrets on the server rather than reusing anything from a laptop:
 python3 -c "import secrets; print(secrets.token_urlsafe(64))"
 ```
 
+Use that generator specifically. Compose interpolates `env_file:` values, so a
+literal `$` in a secret is silently removed — Django's own
+`get_random_secret_key()` includes punctuation and produced a key that reached
+the container six characters shorter than the file showed. `token_urlsafe`
+emits only letters, digits, `_` and `-`, so the problem cannot arise.
+
 `DATABASE_URL` in `backend/.env` is ignored — compose builds its own from the
 `POSTGRES_*` values in `./.env` and points the app at the in-cluster `postgres`
 service, resolving to `postgresql://<user>:<pass>@postgres:5432/<db>`.
