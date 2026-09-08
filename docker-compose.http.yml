@@ -1,0 +1,16 @@
+# Plain-HTTP overlay, for testing against a bare IP before a domain exists.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.http.yml up -d
+#
+# Caddy sits behind the `tls` profile and so does not start here; the frontend
+# nginx is published directly instead. Pair it with DJANGO_BEHIND_TLS=False in
+# backend/.env, or Django will issue secure-only cookies that a browser never
+# sends back over HTTP — the admin login then bounces to the login page with no
+# error at all.
+#
+# Once DNS points at the host, drop this file and use:
+#   docker compose --profile tls up -d
+services:
+  frontend:
+    ports:
+      - "80:80"

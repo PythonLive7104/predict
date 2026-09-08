@@ -157,16 +157,26 @@ FRONTEND_URL = env("FRONTEND_URL", default="http://localhost:5173")
 # the header and Django would believe it.
 if not DEBUG:
     SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
-    SESSION_COOKIE_SECURE = True
-    CSRF_COOKIE_SECURE = True
     SECURE_CONTENT_TYPE_NOSNIFF = True
-    # Caddy already redirects http->https at the edge; this covers anything that
-    # reaches Django by another route.
-    SECURE_SSL_REDIRECT = env.bool("DJANGO_SECURE_SSL_REDIRECT", default=True)
+
+    # One switch for everything that assumes TLS is terminating in front of us.
+    # It defaults on, because production is the normal case and a silent
+    # downgrade is worse than an inconvenient one.
+    #
+    # Set DJANGO_BEHIND_TLS=False only for a plain-HTTP deploy — testing against
+    # a bare IP before a domain exists. Leaving it on there locks you out
+    # confusingly rather than obviously: secure cookies are never sent over
+    # HTTP, so the admin login form accepts your password and bounces straight
+    # back to the login page with no error, and SSL redirect sends every request
+    # to an https:// port nothing is listening on.
+    BEHIND_TLS = env.bool("DJANGO_BEHIND_TLS", default=True)
+    SESSION_COOKIE_SECURE = BEHIND_TLS
+    CSRF_COOKIE_SECURE = BEHIND_TLS
+    SECURE_SSL_REDIRECT = env.bool("DJANGO_SECURE_SSL_REDIRECT", default=BEHIND_TLS)
     # HSTS is a one-way door — browsers cache it and ignore you if TLS later
     # breaks. Left off until the certificate is confirmed working, then raise it
     # (start ~3600, finish at 31536000).
-    SECURE_HSTS_SECONDS = env.int("DJANGO_HSTS_SECONDS", default=0)
+    SECURE_HSTS_SECONDS = env.int("DJANGO_HSTS_SECONDS", default=0) if BEHIND_TLS else 0
     SECURE_HSTS_INCLUDE_SUBDOMAINS = SECURE_HSTS_SECONDS > 0
 
     # Affects only what Django serves — /api, /admin, /hooks — none of which is

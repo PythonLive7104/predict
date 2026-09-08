@@ -91,14 +91,20 @@ services:
     depends_on:
       - web
 
-  # TLS termination. Obtains and renews a Let's Encrypt certificate for $DOMAIN
-  # automatically; Telegram refuses plain-HTTP and self-signed webhooks, so
-  # without this the bot silently receives nothing.
+  # TLS termination. Obtains and renews a Let's Encrypt certificate for the
+  # configured domain automatically. Needed for Telegram webhook mode, the Mini
+  # App, and payment IPN callbacks — none of which accept plain HTTP. The bot
+  # itself does NOT need it: long-polling dials out to Telegram and works with
+  # no inbound URL at all.
   #
   # Port 80 stays open on purpose — it is the ACME HTTP-01 challenge and the
   # http->https redirect, not a way in.
   caddy:
     image: caddy:2-alpine
+    # Only starts with `--profile tls`. Let's Encrypt will not issue a
+    # certificate for a bare IP address, so an IP-only deploy runs without it
+    # and publishes the frontend directly (see docker-compose.http.yml).
+    profiles: ["tls"]
     restart: unless-stopped
     logging: *default-logging
     ports:

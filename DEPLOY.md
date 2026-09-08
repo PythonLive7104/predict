@@ -82,10 +82,28 @@ entirely — the app reaches it over the compose network either way.
 
 ## 4. Start it
 
+**With a domain (full TLS):**
+
 ```bash
-docker compose up -d --build
+docker compose --profile tls up -d --build
 docker compose logs -f caddy    # watch the certificate get issued
 ```
+
+**Without a domain (testing against a bare IP):**
+
+Let's Encrypt will not issue a certificate for an IP, so Caddy stays down and
+the frontend is published directly. Set `DJANGO_BEHIND_TLS=False` in
+`backend/.env` first — leaving it on locks you out in a way that looks like a
+password problem: secure cookies are never sent over HTTP, so the admin login
+accepts your credentials and silently bounces back to the login form.
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.http.yml up -d --build
+```
+
+The bot still works completely in this mode — long-polling dials out to
+Telegram, so nothing needs to reach the server. Only the webhook, the Mini App
+and payment IPNs require the domain.
 
 Migrations run automatically as part of the `web` container's command.
 
