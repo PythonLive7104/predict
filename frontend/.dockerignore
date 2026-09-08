@@ -1,0 +1,6 @@
+# node_modules is reinstalled by `npm ci` inside the image; copying the host's
+# copy in is slow, large, and wrong when the host is a different platform.
+node_modules/
+dist/
+.env
+.env.*

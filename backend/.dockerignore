@@ -1,0 +1,18 @@
+# The build context is copied wholesale by `COPY . .`, so anything left here
+# ends up in the image. Two reasons that matters:
+#
+#   .env    bakes every secret into an image layer, where it survives even if
+#           the file is deleted in a later step.
+#   .venv   is 400 MB of a laptop's Linux virtualenv that pip immediately
+#           reinstalls anyway — pure build time and image size.
+
+.venv/
+__pycache__/
+*.py[cod]
+.env
+*.sqlite3
+db.sqlite3
+staticfiles/
+celerybeat-schedule*
+.pytest_cache/
+.coverage
