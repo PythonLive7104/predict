@@ -90,7 +90,14 @@ services:
   # No longer published to the host — Caddy is the only thing on the internet, so
   # X-Forwarded-Proto can be trusted by the time it reaches Django.
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      args:
+        # From ./.env, NOT backend/.env — Compose interpolates build args from
+        # the shell and its own .env only; backend/.env is runtime config for
+        # the Python containers and is invisible here. Getting that wrong bakes
+        # an empty string into the bundle and the sign-in link silently vanishes.
+        VITE_TELEGRAM_BOT_USERNAME: ${TELEGRAM_BOT_USERNAME:-}
     restart: unless-stopped
     logging: *default-logging
     expose:

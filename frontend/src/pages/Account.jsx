@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
+import { botLink } from "../telegram-link";
 import { isMiniApp, tap } from "../telegram";
 
 const money = (value) => {
@@ -56,9 +57,26 @@ export default function Account({ profile }) {
             )}
           </>
         ) : (
-          <p className="muted" style={{ margin: 0 }}>
-            Open this from the Telegram bot to sign in and unlock picks.
-          </p>
+          <div className="signin">
+            <p className="muted" style={{ marginTop: 0 }}>
+              Everything runs through Telegram — picks, credits and plans live on
+              your bot account. There is no separate login.
+            </p>
+            {botLink() ? (
+              <a
+                className="btn primary"
+                href={botLink()}
+                target="_blank"
+                rel="noreferrer"
+              >
+                Open in Telegram
+              </a>
+            ) : (
+              <p className="detail" style={{ marginBottom: 0 }}>
+                Search for the bot in Telegram and tap Start.
+              </p>
+            )}
+          </div>
         )}
       </div>
 
