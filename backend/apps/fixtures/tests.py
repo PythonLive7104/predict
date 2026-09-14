@@ -7,6 +7,7 @@ does not look like overspending, it looks like a parameter bug. These pin the tw
 knobs that decide the bill.
 """
 
+from datetime import timedelta
 from io import StringIO
 from unittest.mock import patch
 
@@ -17,6 +18,7 @@ from django.utils import timezone
 
 from apps.fixtures.models import Fixture, League, Team
 from apps.fixtures.tasks import (
+    sync_odds_for_upcoming,
     DemoDataPresent,
     leagues_to_sync,
     sync_fixtures,
@@ -260,3 +262,66 @@ class BackfillTests(TestCase):
         League.objects.all().delete()
         with self.assertRaises(CommandError):
             call_command("backfill", stdout=StringIO())
+
+
+class OddsSyncTests(TestCase):
+    """
+    Odds were fetched by nothing for the whole life of the project, which made
+    `market_odds`, `edge` and the entire odds-target builder silently inert.
+    """
+
+    def setUp(self):
+        self.league = League.objects.create(
+            api_id=39, name="Premier League", country="England", season=2026
+        )
+        self.home = Team.objects.create(api_id=1, name="Home")
+        self.away = Team.objects.create(api_id=2, name="Away")
+
+    def _fixture(self, hours_ahead, status=Fixture.Status.SCHEDULED, api_id=None):
+        return Fixture.objects.create(
+            api_id=api_id or (9000 + Fixture.objects.count()),
+            league=self.league, home=self.home, away=self.away,
+            kickoff=timezone.now() + timedelta(hours=hours_ahead),
+            status=status,
+        )
+
+    @patch("apps.fixtures.tasks.sync_odds_and_injuries")
+    def test_only_upcoming_scheduled_fixtures_are_priced(self, per_fixture):
+        wanted = self._fixture(6)
+        self._fixture(-6)                                   # already kicked off
+        self._fixture(200)                                  # beyond the window
+        self._fixture(6, status=Fixture.Status.FINISHED)    # nothing left to price
+
+        result = sync_odds_for_upcoming(hours_ahead=48)
+
+        self.assertEqual(result["fixtures"], 1)
+        per_fixture.assert_called_once_with(wanted.pk)
+
+    @patch("apps.fixtures.tasks.sync_odds_and_injuries")
+    def test_request_cost_is_reported(self, per_fixture):
+        """Two calls per fixture; this is the largest scheduled draw on quota."""
+        for _ in range(3):
+            self._fixture(4)
+
+        result = sync_odds_for_upcoming()
+
+        self.assertEqual(result["synced"], 3)
+        self.assertEqual(result["requests"], 6)
+
+    @patch("apps.fixtures.tasks.sync_odds_and_injuries")
+    def test_one_failure_does_not_cost_the_rest(self, per_fixture):
+        """A fixture with no market published yet is normal, not fatal."""
+        for _ in range(3):
+            self._fixture(4)
+        per_fixture.side_effect = [Exception("no odds yet"), None, None]
+
+        result = sync_odds_for_upcoming()
+
+        self.assertEqual(result["synced"], 2)
+        self.assertEqual(result["failed"], 1)
+
+    @patch("apps.fixtures.tasks.sync_odds_and_injuries")
+    def test_an_empty_window_is_not_an_error(self, per_fixture):
+        result = sync_odds_for_upcoming()
+        self.assertEqual(result, {"fixtures": 0, "synced": 0, "failed": 0, "requests": 0})
+        per_fixture.assert_not_called()

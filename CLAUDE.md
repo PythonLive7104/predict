@@ -194,6 +194,7 @@ Celery beat (embedded in the worker via `-B`), staggered in UTC:
 | Task | When | Why then |
 |---|---|---|
 | `sync_fixtures` | 07:00, 23:00 | 07:00 lands the slate before generation; 23:00 catches the evening's results in time for settlement and the 04:00 ratings refresh. Hours and horizon are env-tunable (`API_FOOTBALL_SYNC_HOURS`, `API_FOOTBALL_SYNC_DAYS_AHEAD`) because the API-Football quota, not compute, is what this task runs out of. |
+| `sync_odds_for_upcoming` | 08:00 | Before generation. A pick priced without odds has no `market_odds` and no `edge`, and the odds-target builder cannot use it at all. Two requests per fixture — the largest scheduled draw on the quota. |
 | `generate_daily_predictions` | 08:30 | After the morning's team news lands. Makes no API calls in batch mode — it prices the slate and chains `submit_rationale_batch`. |
 | `collect_rationale_batches` | every 5 min | Backfills prose onto already-published picks as soon as a batch returns. |
 | `settle_predictions` | hourly at :15 | Offset from the fixture sync. Triggers `rebuild_accuracy`. |

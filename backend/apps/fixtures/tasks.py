@@ -5,6 +5,7 @@ from datetime import date, timedelta
 
 from celery import shared_task
 from django.conf import settings
+from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
 from .models import Fixture, Injury, League, Odds, Team
@@ -176,6 +177,45 @@ def sync_fixtures(days_ahead: int = 3) -> int:
     # unless you already know how many calls you have spent today.
     logger.info("synced %s fixtures in %s requests", count, requests)
     return count
+
+
+@shared_task
+def sync_odds_for_upcoming(hours_ahead: int = 48) -> dict:
+    """
+    Fetch odds and injuries for the fixtures about to be priced.
+
+    Nothing called `sync_odds_and_injuries` before this, which made two features
+    quietly impossible: `Prediction.market_odds` and `edge` were always null, so
+    the odds-target builder found no priced legs and reported every payout as
+    unreachable — correctly, but for a reason nobody could see from the bot.
+
+    Two requests per fixture, so it is the largest scheduled draw on the quota:
+    around 40/day at 20 fixtures, against PRO's 7,500.
+    """
+    now = timezone.now()
+    fixtures = list(
+        Fixture.objects.filter(
+            status=Fixture.Status.SCHEDULED,
+            kickoff__gte=now,
+            kickoff__lte=now + timedelta(hours=hours_ahead),
+            league__is_active=True,
+        ).order_by("kickoff")
+    )
+
+    done = failed = 0
+    for fixture in fixtures:
+        try:
+            sync_odds_and_injuries(fixture.pk)
+            done += 1
+        except Exception:
+            # One fixture with no market published yet must not cost the rest.
+            logger.exception("odds sync failed for fixture %s", fixture.pk)
+            failed += 1
+
+    result = {"fixtures": len(fixtures), "synced": done, "failed": failed,
+              "requests": done * 2}
+    logger.info("odds/injuries %s", result)
+    return result
 
 
 @shared_task

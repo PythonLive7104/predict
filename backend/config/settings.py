@@ -222,6 +222,12 @@ CELERY_BEAT_SCHEDULE = {
         "schedule": crontab(hour=env("API_FOOTBALL_SYNC_HOURS", default="7,23"), minute=0),
         "kwargs": {"days_ahead": env.int("API_FOOTBALL_SYNC_DAYS_AHEAD", default=3)},
     },
+    # Before generation: a prediction priced without odds carries no market_odds
+    # and no edge, and the odds-target builder cannot use it at all.
+    "sync-odds": {
+        "task": "apps.fixtures.tasks.sync_odds_for_upcoming",
+        "schedule": crontab(hour=8, minute=0),
+    },
     "generate-daily-predictions": {
         "task": "apps.predictions.tasks.generate_daily_predictions",
         "schedule": crontab(hour=8, minute=30),
