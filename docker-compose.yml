@@ -78,6 +78,7 @@ services:
     environment: *backend-env
     command: >
       sh -c "python manage.py migrate --noinput &&
+             { python manage.py set_webhook || echo 'no webhook URL configured — skipping'; } &&
              gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers ${GUNICORN_WORKERS:-3} --timeout 120"
     expose:
       - "8000"
