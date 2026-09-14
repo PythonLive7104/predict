@@ -13,9 +13,20 @@ router = Router(name="menu")
 @router.message(CommandStart(deep_link=True))
 @router.message(CommandStart())
 async def start(message: Message, command: CommandObject | None = None) -> None:
-    # Deep link payload is the referrer's code: t.me/<bot>?start=ABC12345
-    referral = (command.args or "") if command else ""
-    user, created = await services.get_or_create_user(message.from_user, referral)
+    # The deep-link payload is either a referrer's code (t.me/<bot>?start=ABC12345)
+    # or a connect code from the website. Both are opaque strings, so rather than
+    # guessing from their shape we pass it as a referral — a connect code matches
+    # no referral_code, so that is a harmless no-op — and then try to claim it.
+    payload = (command.args or "") if command else ""
+    user, created = await services.get_or_create_user(message.from_user, payload)
+
+    if payload and await services.claim_link(payload, user):
+        await message.answer(
+            "✅ <b>Website connected.</b>\n\n"
+            "Head back to your browser — it will sign you in automatically. "
+            "Your credits and plan are the same on both."
+        )
+
     summary = await services.plan_summary(user)
 
     greeting = "Welcome" if created else "Welcome back"

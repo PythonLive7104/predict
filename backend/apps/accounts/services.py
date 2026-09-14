@@ -2,10 +2,11 @@
 
 from django.conf import settings
 from django.db import transaction
+from django.utils import timezone
 
 from apps.billing.models import CreditEntry, Wallet
 
-from .models import User
+from .models import LinkCode, User
 
 
 @transaction.atomic
@@ -46,3 +47,56 @@ def get_or_create_from_telegram(
                 ref=f"user:{user.pk}",
             )
     return user, True
+
+
+# --- Connecting a browser to a Telegram account ---------------------------
+#
+# The browser asks for a code, opens the bot with it, and polls. Tapping Start
+# claims it; the next poll exchanges it for a session. Nobody types a phone
+# number and nobody signs into Telegram on the web — they connect to the bot,
+# which is what they believe they are doing.
+
+
+def create_link_code() -> LinkCode:
+    return LinkCode.objects.create()
+
+
+@transaction.atomic
+def claim_link_code(code: str, user: User) -> bool:
+    """
+    Bot side: attach a Telegram account to a pending code.
+
+    `select_for_update` because two taps on Start arrive as two updates, and
+    without the lock both would pass the claimable check.
+    """
+    row = LinkCode.objects.select_for_update().filter(code=code).first()
+    if row is None or not row.is_claimable:
+        return False
+    row.user = user
+    row.claimed_at = timezone.now()
+    row.save(update_fields=["user", "claimed_at", "updated_at"])
+    return True
+
+
+@transaction.atomic
+def redeem_link_code(code: str) -> User | None:
+    """
+    Web side: exchange a claimed code for the account, once.
+
+    Consumed on the way out. A code read off a shared screen, a chat log or a
+    server log must not still be worth a session afterwards.
+    """
+    # `of=("self",)` locks the LinkCode row only. Without it, select_related on
+    # the nullable `user` FK builds a LEFT OUTER JOIN and Postgres refuses:
+    # "FOR UPDATE cannot be applied to the nullable side of an outer join".
+    row = (
+        LinkCode.objects.select_for_update(of=("self",))
+        .select_related("user")
+        .filter(code=code)
+        .first()
+    )
+    if row is None or not row.is_redeemable:
+        return None
+    row.consumed_at = timezone.now()
+    row.save(update_fields=["consumed_at", "updated_at"])
+    return row.user

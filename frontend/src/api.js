@@ -108,6 +108,31 @@ export async function loginWithWidget(telegramUser) {
   return data.user;
 }
 
+/**
+ * Start connecting this browser to a Telegram account.
+ *
+ * Returns { code, bot_url, expires_at }. Open bot_url, then poll
+ * pollConnect(code) until it resolves.
+ */
+export async function startConnect() {
+  return request("/auth/link/", { method: "POST", auth: false });
+}
+
+/**
+ * Poll one connect code.
+ *
+ * Resolves to the profile once the bot has claimed it, null while still
+ * waiting, and throws when the code is spent or expired. The code is
+ * single-use, so a resolved poll is the only one that ever succeeds.
+ */
+export async function pollConnect(code) {
+  const data = await request(`/auth/link/${encodeURIComponent(code)}/`, { auth: false });
+  if (!data?.access) return null;
+  accessToken = data.access;
+  writeRefresh(data.refresh);
+  return data.user;
+}
+
 /** Restore a session from a stored refresh token on a cold load. */
 export async function restoreSession() {
   if (!(await refresh())) return null;

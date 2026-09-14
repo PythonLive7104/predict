@@ -9,7 +9,10 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from apps.predictions.access import entitlement_for
 
 from . import services
+from django.conf import settings
+
 from .auth import InitDataError, verify_init_data, verify_login_widget
+from .models import LinkCode
 
 
 @api_view(["POST"])
@@ -118,3 +121,46 @@ def _profile(user) -> dict:
         "referral_code": user.referral_code,
         "notifications_enabled": user.notifications_enabled,
     }
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def link_start(request):
+    """
+    Hand the browser a one-time code and the bot link that carries it.
+
+    Unauthenticated by design — the caller has no account yet; that is the point.
+    """
+    code = services.create_link_code()
+    username = settings.TELEGRAM_BOT_USERNAME.lstrip("@")
+    return Response({
+        "code": code.code,
+        "expires_at": code.expires_at,
+        # `start` is how Telegram passes a payload through the deep link; the
+        # bot reads it on /start.
+        "bot_url": f"https://t.me/{username}?start={code.code}" if username else "",
+    })
+
+
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def link_status(request, code: str):
+    """
+    Poll until the code is claimed, then hand back the session.
+
+    202 means keep waiting. Anything wrong — unknown, expired, already used —
+    answers 404 alike: distinguishing them would tell someone guessing codes
+    which guesses were close.
+    """
+    user = services.redeem_link_code(code)
+    if user is not None:
+        return _issue_tokens(
+            telegram_id=user.telegram_id,
+            username=user.telegram_username,
+            language_code=user.language_code,
+        )
+
+    row = LinkCode.objects.filter(code=code).first()
+    if row is not None and row.is_claimable:
+        return Response({"status": "pending"}, status=status.HTTP_202_ACCEPTED)
+    return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)

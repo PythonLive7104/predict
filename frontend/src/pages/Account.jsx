@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
-import { api, loginWithWidget } from "../api";
+import { api } from "../api";
 import { botLink } from "../telegram-link";
-import TelegramLogin from "../components/TelegramLogin";
+import ConnectTelegram from "../components/ConnectTelegram";
 import { isMiniApp, tap } from "../telegram";
 
 const money = (value) => {
@@ -13,7 +13,6 @@ export default function Account({ profile, onProfileChange }) {
   const [plans, setPlans] = useState([]);
   const [busy, setBusy] = useState(null);
   const [error, setError] = useState(null);
-  const [signInError, setSignInError] = useState(null);
   const [syncing, setSyncing] = useState(false);
 
   /**
@@ -34,18 +33,6 @@ export default function Account({ profile, onProfileChange }) {
     }
   }
 
-  async function signIn(telegramUser) {
-    setSignInError(null);
-    try {
-      await loginWithWidget(telegramUser);
-      // The refresh token is stored now, so reloading lets App's ordinary
-      // restoreSession path establish the session. One code path brings a
-      // session into being rather than two that can drift apart.
-      window.location.reload();
-    } catch {
-      setSignInError("Couldn't sign in with Telegram. Please try again.");
-    }
-  }
 
   useEffect(() => {
     api.plans().then(setPlans).catch(() => setPlans([]));
@@ -109,11 +96,10 @@ export default function Account({ profile, onProfileChange }) {
         ) : (
           <div className="signin">
             <p className="muted" style={{ marginTop: 0 }}>
-              Sign in with Telegram — picks, credits and plans live on your bot
-              account, and this signs you into the same one. No password.
+              Connect your Telegram account — picks, credits and plans live there,
+              and this links you to the same one. No password, no phone number.
             </p>
-            <TelegramLogin onAuth={signIn} onError={setSignInError} />
-            {signInError && <p className="caveat">{signInError}</p>}
+            <ConnectTelegram onConnected={() => window.location.reload()} />
             {botLink() && (
               <p className="detail" style={{ marginBottom: 0, marginTop: 12 }}>
                 Or <a href={botLink()} target="_blank" rel="noreferrer">open the bot

@@ -187,3 +187,11 @@ def pending_review_count() -> int:
     from apps.billing.models import Payment
 
     return Payment.objects.filter(status=Payment.Status.REVIEW).count()
+
+
+@sync_to_async
+def claim_link(code: str, user: User) -> bool:
+    """Attach this Telegram account to a browser waiting on a connect code."""
+    from apps.accounts.services import claim_link_code
+
+    return claim_link_code(code, user)
