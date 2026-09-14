@@ -21,7 +21,13 @@ from .factories import make_fixture, make_league, make_team
 
 User = get_user_model()
 
-GATED_FIELDS = ("selection", "selection_label", "market_odds")
+# Everything about the pick waits for the unlock. `edge` is in here because it
+# is derived from the price — publishing it would leak most of what withholding
+# market_odds protects.
+GATED_FIELDS = (
+    "selection", "selection_label", "market_odds", "edge",
+    "market", "market_label", "confidence",
+)
 
 
 class ApiTestBase(APITestCase):
@@ -67,14 +73,21 @@ class LockedPickTests(ApiTestBase):
         self.assertEqual(pick["rationale"], "")
         self.assertFalse(pick["unlocked"])
 
-    def test_confidence_and_fixture_stay_public(self):
-        """The teaser has to be useful, or nobody converts."""
+    def test_only_the_fixture_is_public(self):
+        """
+        A locked row names the match and nothing else, matching the bot.
+
+        This is a deliberate trade the product owner chose: confidence was the
+        teaser that made one match worth a credit over another. Hiding it means
+        every row reads the same. If conversion falls, start here.
+        """
         self.make_pick(confidence=77)
         pick = self.client.get(reverse("predictions:todays-picks")).data["results"][0]
 
-        self.assertEqual(pick["confidence"], 77)
-        self.assertEqual(pick["market_label"], "Match Result (1X2)")
         self.assertIn("Home", pick["fixture"]["home"])
+        self.assertIsNotNone(pick["fixture"]["kickoff"])
+        for field in GATED_FIELDS:
+            self.assertIsNone(pick[field], f"{field} leaked on a locked pick")
 
     def test_authenticated_but_unpaid_user_sees_nothing_extra(self):
         self.make_pick()

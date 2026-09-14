@@ -26,11 +26,18 @@ class FixtureBriefSerializer(serializers.Serializer):
 
 class PredictionSerializer(serializers.ModelSerializer):
     fixture = FixtureBriefSerializer(read_only=True)
-    market_label = serializers.CharField(source="get_market_display", read_only=True)
+    # Everything about the pick itself is withheld until it is unlocked — the
+    # market and the confidence included. A locked row carries the fixture and
+    # nothing else, matching the bot exactly; the paywall has to hold at the API
+    # or hiding it in the UI is decoration anyone can curl straight past.
+    market = serializers.SerializerMethodField()
+    market_label = serializers.SerializerMethodField()
+    confidence = serializers.SerializerMethodField()
     selection = serializers.SerializerMethodField()
     selection_label = serializers.SerializerMethodField()
     rationale = serializers.SerializerMethodField()
     market_odds = serializers.SerializerMethodField()
+    edge = serializers.SerializerMethodField()
     unlocked = serializers.SerializerMethodField()
 
     class Meta:
@@ -59,6 +66,20 @@ class PredictionSerializer(serializers.ModelSerializer):
 
     def get_market_odds(self, obj):
         return obj.market_odds if self._unlocked else None
+
+    def get_market(self, obj):
+        return obj.market if self._unlocked else None
+
+    def get_market_label(self, obj):
+        return obj.get_market_display() if self._unlocked else None
+
+    def get_confidence(self, obj):
+        return obj.confidence if self._unlocked else None
+
+    def get_edge(self, obj):
+        # Edge is derived from the price, so publishing it on a locked row
+        # leaks most of what withholding market_odds was protecting.
+        return obj.edge if self._unlocked else None
 
 
 class SlipSerializer(serializers.ModelSerializer):
