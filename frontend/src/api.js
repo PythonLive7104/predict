@@ -90,6 +90,24 @@ export async function loginWithTelegram() {
   return data.user;
 }
 
+/**
+ * Sign in with a Telegram Login Widget payload (public web).
+ *
+ * Same endpoint and same account as the Mini App path — the server keys on
+ * telegram_id, so signing in here finds the wallet and credits you already have
+ * in the bot rather than opening a second account beside them.
+ */
+export async function loginWithWidget(telegramUser) {
+  const data = await request("/auth/telegram/", {
+    method: "POST",
+    body: { telegram_login: telegramUser },
+    auth: false,
+  });
+  accessToken = data.access;
+  writeRefresh(data.refresh);
+  return data.user;
+}
+
 /** Restore a session from a stored refresh token on a cold load. */
 export async function restoreSession() {
   if (!(await refresh())) return null;

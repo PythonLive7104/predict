@@ -9,19 +9,40 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from apps.predictions.access import entitlement_for
 
 from . import services
-from .auth import InitDataError, verify_init_data
+from .auth import InitDataError, verify_init_data, verify_login_widget
 
 
 @api_view(["POST"])
 @permission_classes([AllowAny])
 def telegram_login(request):
     """
-    Exchange a signed Mini App `initData` string for a JWT pair.
+    Exchange signed Telegram data for a JWT pair.
 
-    This is what lets one React build serve both surfaces: inside Telegram the
-    page posts initData here and gets the same tokens the public web app uses.
+    Two shapes arrive here. Inside Telegram the page posts `init_data`; on the
+    public web the Login Widget posts `telegram_login`. Both resolve to the same
+    account, because provisioning keys on telegram_id — so signing in on the web
+    finds the wallet and credits you already have in the bot rather than opening
+    a second account beside them.
     """
     init_data = request.data.get("init_data", "")
+    widget = request.data.get("telegram_login")
+
+    # Login Widget path: the public web app, where there is no initData because
+    # the page is not running inside Telegram.
+    if widget:
+        try:
+            payload = verify_login_widget(widget)
+        except (InitDataError, TypeError, AttributeError):
+            return Response(
+                {"detail": "Invalid Telegram data."}, status=status.HTTP_401_UNAUTHORIZED
+            )
+        return _issue_tokens(
+            telegram_id=payload.get("id"),
+            username=payload.get("username", ""),
+            language_code=payload.get("language_code", "en"),
+            referral_code=request.data.get("referral_code", ""),
+        )
+
     if not init_data:
         return Response({"detail": "init_data is required."}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -32,14 +53,30 @@ def telegram_login(request):
         return Response({"detail": "Invalid Telegram data."}, status=status.HTTP_401_UNAUTHORIZED)
 
     tg_user = payload.get("user") or {}
-    if not tg_user.get("id"):
-        return Response({"detail": "Invalid Telegram data."}, status=status.HTTP_401_UNAUTHORIZED)
-
-    user, _ = services.get_or_create_from_telegram(
-        telegram_id=tg_user["id"],
+    return _issue_tokens(
+        telegram_id=tg_user.get("id"),
         username=tg_user.get("username", ""),
         language_code=tg_user.get("language_code", "en"),
         referral_code=payload.get("start_param", ""),
+    )
+
+
+def _issue_tokens(telegram_id, username="", language_code="en", referral_code=""):
+    """
+    Resolve the Telegram id to an account and hand back a JWT pair.
+
+    Shared by both login paths deliberately: provisioning is idempotent on
+    telegram_id, so someone who starts in the bot and later signs in on the web
+    lands on the same account with the same wallet — not a second one.
+    """
+    if not telegram_id:
+        return Response({"detail": "Invalid Telegram data."}, status=status.HTTP_401_UNAUTHORIZED)
+
+    user, _ = services.get_or_create_from_telegram(
+        telegram_id=telegram_id,
+        username=username or "",
+        language_code=language_code or "en",
+        referral_code=referral_code or "",
     )
 
     refresh = RefreshToken.for_user(user)

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
-import { api } from "../api";
+import { api, loginWithWidget } from "../api";
 import { botLink } from "../telegram-link";
+import TelegramLogin from "../components/TelegramLogin";
 import { isMiniApp, tap } from "../telegram";
 
 const money = (value) => {
@@ -12,6 +13,20 @@ export default function Account({ profile }) {
   const [plans, setPlans] = useState([]);
   const [busy, setBusy] = useState(null);
   const [error, setError] = useState(null);
+  const [signInError, setSignInError] = useState(null);
+
+  async function signIn(telegramUser) {
+    setSignInError(null);
+    try {
+      await loginWithWidget(telegramUser);
+      // The refresh token is stored now, so reloading lets App's ordinary
+      // restoreSession path establish the session. One code path brings a
+      // session into being rather than two that can drift apart.
+      window.location.reload();
+    } catch {
+      setSignInError("Couldn't sign in with Telegram. Please try again.");
+    }
+  }
 
   useEffect(() => {
     api.plans().then(setPlans).catch(() => setPlans([]));
@@ -59,21 +74,15 @@ export default function Account({ profile }) {
         ) : (
           <div className="signin">
             <p className="muted" style={{ marginTop: 0 }}>
-              Everything runs through Telegram — picks, credits and plans live on
-              your bot account. There is no separate login.
+              Sign in with Telegram — picks, credits and plans live on your bot
+              account, and this signs you into the same one. No password.
             </p>
-            {botLink() ? (
-              <a
-                className="btn primary"
-                href={botLink()}
-                target="_blank"
-                rel="noreferrer"
-              >
-                Open in Telegram
-              </a>
-            ) : (
-              <p className="detail" style={{ marginBottom: 0 }}>
-                Search for the bot in Telegram and tap Start.
+            <TelegramLogin onAuth={signIn} onError={setSignInError} />
+            {signInError && <p className="caveat">{signInError}</p>}
+            {botLink() && (
+              <p className="detail" style={{ marginBottom: 0, marginTop: 12 }}>
+                Or <a href={botLink()} target="_blank" rel="noreferrer">open the bot
+                directly</a>.
               </p>
             )}
           </div>
