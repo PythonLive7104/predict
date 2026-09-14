@@ -41,6 +41,28 @@ MIN_LEGS = 2
 
 
 @dataclass
+class OddsResult:
+    """
+    Why there is or isn't a slip.
+
+    A single "no combination found" covers three completely different
+    situations — no prices in the database at all, too few priced matches, and a
+    slate that genuinely cannot reach the payout — and only the last is
+    something the user can act on. Telling them to "try a lower target" when we
+    simply have no odds sends them round a loop that cannot succeed.
+    """
+
+    slip: "OddsSlip | None"
+    reason: str                     # ok | no_prices | too_few_matches | unreachable
+    priced_fixtures: int = 0
+    best_available: Decimal | None = None   # closest payout we could build
+
+    @property
+    def found(self) -> bool:
+        return self.slip is not None
+
+
+@dataclass
 class OddsSlip:
     legs: list
     combined_odds: Decimal
@@ -104,37 +126,49 @@ def build_for_target(
     min_odds: float = 3.0,
     max_odds: float = 5.0,
     min_confidence: int = 60,
-) -> OddsSlip | None:
+) -> OddsResult:
     """
     The combination landing inside [min_odds, max_odds] with the best chance of
-    winning, or None when the slate cannot reach the target.
+    winning, or a reason why there isn't one.
 
-    Returning None matters: padding a slip with a long shot to reach 5.00 is how
-    a public record gets ruined, and the whole product rests on that record.
+    Never pads to reach a target: adding a long shot to hit 5.00 is how a public
+    record gets ruined, and the whole product rests on that record.
     """
     if min_odds <= 1 or max_odds < min_odds:
         raise ValueError(f"nonsensical odds range: {min_odds}-{max_odds}")
 
     pool = candidate_legs(start, end, min_confidence)
-    if len({leg.fixture_id for leg in pool}) < MIN_LEGS:
-        logger.info("odds builder: only %s candidate legs, need %s", len(pool), MIN_LEGS)
-        return None
+    fixtures = len({leg.fixture_id for leg in pool})
 
-    # Work in logs: sums are cheaper than products and avoid float drift across
-    # thousands of candidate combinations.
+    if not pool:
+        # Either nothing is published for this window, or nothing published
+        # carries a price. Both are ours to fix, not the user's.
+        logger.info("odds builder: no priced legs for %s..%s", start, end or start)
+        return OddsResult(None, "no_prices")
+
+    if fixtures < MIN_LEGS:
+        return OddsResult(None, "too_few_matches", priced_fixtures=fixtures)
+
     log_min, log_max = math.log(min_odds), math.log(max_odds)
     priced = [(leg, math.log(float(leg.market_odds)), math.log(leg.probability)) for leg in pool]
 
     best: tuple[float, list] | None = None
+    # Tracked so an unreachable target can say what IS reachable, which is the
+    # one piece of advice the user can actually act on.
+    closest: float | None = None
+
     for size in range(MIN_LEGS, min(MAX_LEGS, len(priced)) + 1):
         for combo in combinations(priced, size):
             # One leg per fixture. Two picks on the same match are correlated, so
             # multiplying their odds overstates the payout for the risk taken —
             # the slip is a worse bet than its headline number claims.
-            fixtures = {c[0].fixture_id for c in combo}
-            if len(fixtures) != size:
+            if len({c[0].fixture_id for c in combo}) != size:
                 continue
+
             log_odds = sum(c[1] for c in combo)
+            if closest is None or abs(log_odds - log_min) < abs(closest - log_min):
+                closest = log_odds
+
             if log_odds < log_min or log_odds > log_max:
                 continue
             log_prob = sum(c[2] for c in combo)
@@ -142,19 +176,25 @@ def build_for_target(
                 best = (log_prob, [c[0] for c in combo])
 
     if best is None:
-        logger.info(
-            "odds builder: no combination of %s legs reaches %.2f-%.2f",
-            len(pool), min_odds, max_odds,
+        return OddsResult(
+            None, "unreachable",
+            priced_fixtures=fixtures,
+            best_available=(
+                Decimal(str(round(math.exp(closest), 2))) if closest is not None else None
+            ),
         )
-        return None
 
     legs = sorted(best[1], key=lambda p: p.fixture.kickoff)
     combined = Decimal("1.0")
     for leg in legs:
         combined *= leg.market_odds
 
-    return OddsSlip(
-        legs=legs,
-        combined_odds=combined.quantize(Decimal("0.01")),
-        combined_probability=math.exp(best[0]),
+    return OddsResult(
+        OddsSlip(
+            legs=legs,
+            combined_odds=combined.quantize(Decimal("0.01")),
+            combined_probability=math.exp(best[0]),
+        ),
+        "ok",
+        priced_fixtures=fixtures,
     )

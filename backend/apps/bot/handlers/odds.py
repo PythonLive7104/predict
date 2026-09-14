@@ -48,12 +48,41 @@ async def build(callback: CallbackQuery) -> None:
         return
 
     if not slip["found"]:
-        # Not an error. A thin slate genuinely cannot reach every payout, and
-        # inventing a long shot to fill the gap is how a record gets ruined.
+        # Say which of three very different things happened. Only one of them is
+        # something the user can do anything about, and telling someone to "try
+        # a lower target" when we simply have no prices sends them round a loop
+        # that cannot succeed.
+        match slip["reason"]:
+            case "no_prices":
+                body = (
+                    "We don't have bookmaker prices for these matches yet.\n\n"
+                    "Prices arrive a few hours before kick-off, so try again "
+                    "closer to the day — or check <b>Today</b>, which is usually "
+                    "priced first."
+                )
+            case "too_few_matches":
+                n = slip["priced_fixtures"]
+                body = (
+                    f"Only {n} priced match{'es' if n != 1 else ''} in this window "
+                    "— a slip needs at least two.\n\n"
+                    "Try <b>Fri–Sun</b> for a fuller slate."
+                )
+            case "unreachable" if slip.get("best_available"):
+                body = (
+                    f"This slate tops out around <b>{slip['best_available']}</b>, "
+                    f"short of {slip['target']}.\n\n"
+                    "Pick a target at or below that, or widen the window to bring "
+                    "in more matches."
+                )
+            case _:
+                body = (
+                    "No combination reaches that payout without stretching to a "
+                    "leg we wouldn't back ourselves.\n\n"
+                    "Try a lower target, or a wider window."
+                )
+
         await callback.message.answer(
-            f"<b>{slip['target']} · {slip['span']}</b>\n\n"
-            "No combination reaches that payout at a confidence worth publishing. "
-            "Try a lower target, or a wider window.",
+            f"<b>{slip['target']} · {slip['span']}</b>\n\n{body}",
             reply_markup=kb.odds_keyboard(span, target),
         )
         return

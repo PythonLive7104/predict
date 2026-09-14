@@ -73,10 +73,18 @@ def build_odds_slip(target: str, span: str) -> dict | None:
     _key, label, low, high = band
 
     start, end, span_label = access.span_dates(span)
-    slip = odds_builder.build_for_target(start, end, min_odds=low, max_odds=high)
-    if slip is None:
-        return {"found": False, "target": label, "span": span_label}
+    result = odds_builder.build_for_target(start, end, min_odds=low, max_odds=high)
+    if not result.found:
+        return {
+            "found": False,
+            "target": label,
+            "span": span_label,
+            "reason": result.reason,
+            "priced_fixtures": result.priced_fixtures,
+            "best_available": str(result.best_available) if result.best_available else None,
+        }
 
+    slip = result.slip
     return {
         "found": True,
         "target": label,

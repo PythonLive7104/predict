@@ -44,9 +44,10 @@ class OddsBuilderTests(TestCase):
         for odds in ("1.40", "1.50", "1.60", "1.80"):
             self._leg(odds, 72)
 
-        slip = odds_builder.build_for_target(self.today, min_odds=3.0, max_odds=5.0)
+        result = odds_builder.build_for_target(self.today, min_odds=3.0, max_odds=5.0)
 
-        self.assertIsNotNone(slip)
+        self.assertTrue(result.found, result.reason)
+        slip = result.slip
         self.assertGreaterEqual(float(slip.combined_odds), 3.0)
         self.assertLessEqual(float(slip.combined_odds), 5.0)
 
@@ -62,10 +63,11 @@ class OddsBuilderTests(TestCase):
         self._leg("1.55", 85)
         self._leg("1.70", 85)
 
-        slip = odds_builder.build_for_target(self.today, min_odds=3.0, max_odds=5.0,
+        result = odds_builder.build_for_target(self.today, min_odds=3.0, max_odds=5.0,
                                              min_confidence=50)
 
-        self.assertIsNotNone(slip)
+        self.assertTrue(result.found, result.reason)
+        slip = result.slip
         # The 55% pair multiplies to ~0.30; the 85% trio to ~0.61.
         self.assertGreater(slip.combined_probability, 0.5)
         self.assertTrue(all(leg.confidence >= 85 for leg in slip.legs))
@@ -75,8 +77,8 @@ class OddsBuilderTests(TestCase):
         self._leg("1.10", 90)
         self._leg("1.12", 90)
 
-        slip = odds_builder.build_for_target(self.today, min_odds=3.0, max_odds=5.0)
-        self.assertIsNone(slip)
+        result = odds_builder.build_for_target(self.today, min_odds=3.0, max_odds=5.0)
+        self.assertFalse(result.found)
 
     def test_never_puts_two_legs_on_the_same_fixture(self):
         """Correlated legs make the combined odds lie about the real risk."""
@@ -88,10 +90,10 @@ class OddsBuilderTests(TestCase):
         self._leg("1.85", 75, market=Market.OVER_UNDER_25, fixture=shared)
         self._leg("1.70", 75)
 
-        slip = odds_builder.build_for_target(self.today, min_odds=3.0, max_odds=5.0)
+        result = odds_builder.build_for_target(self.today, min_odds=3.0, max_odds=5.0)
 
-        if slip:
-            fixtures = [leg.fixture_id for leg in slip.legs]
+        if result.found:
+            fixtures = [leg.fixture_id for leg in result.slip.legs]
             self.assertEqual(len(fixtures), len(set(fixtures)))
 
     def test_spans_a_date_range_for_weekend_requests(self):
@@ -104,9 +106,9 @@ class OddsBuilderTests(TestCase):
             self.today, self.today + timedelta(days=2), min_odds=3.0, max_odds=5.0
         )
 
-        self.assertIsNone(same_day, "one leg cannot reach 3.00")
-        self.assertIsNotNone(weekend)
-        self.assertGreaterEqual(len(weekend.legs), 2)
+        self.assertFalse(same_day.found, "one leg cannot reach 3.00")
+        self.assertTrue(weekend.found, weekend.reason)
+        self.assertGreaterEqual(len(weekend.slip.legs), 2)
 
     def test_unpublished_picks_are_never_used(self):
         """Tier defaults to FREE on unpublished rows, so published_at is the real gate."""
@@ -115,7 +117,7 @@ class OddsBuilderTests(TestCase):
             leg.published_at = None
             leg.save()
 
-        self.assertIsNone(odds_builder.build_for_target(self.today, min_odds=3.0, max_odds=5.0))
+        self.assertFalse(odds_builder.build_for_target(self.today, min_odds=3.0, max_odds=5.0).found)
 
     def test_legs_without_a_price_cannot_be_used(self):
         for odds in ("1.60", "1.70", "1.80"):
@@ -123,17 +125,17 @@ class OddsBuilderTests(TestCase):
             leg.market_odds = None
             leg.save()
 
-        self.assertIsNone(odds_builder.build_for_target(self.today, min_odds=3.0, max_odds=5.0))
+        self.assertFalse(odds_builder.build_for_target(self.today, min_odds=3.0, max_odds=5.0).found)
 
     def test_legs_are_ordered_by_kickoff(self):
         self._leg("1.60", 80, days_ahead=2)
         self._leg("1.70", 80, days_ahead=0)
         self._leg("1.80", 80, days_ahead=1)
 
-        slip = odds_builder.build_for_target(
+        result = odds_builder.build_for_target(
             self.today, self.today + timedelta(days=2), min_odds=3.0, max_odds=5.0
         )
-        kickoffs = [leg.fixture.kickoff for leg in slip.legs]
+        kickoffs = [leg.fixture.kickoff for leg in result.slip.legs]
         self.assertEqual(kickoffs, sorted(kickoffs))
 
     def test_a_nonsensical_range_is_rejected(self):
@@ -141,3 +143,57 @@ class OddsBuilderTests(TestCase):
             odds_builder.build_for_target(self.today, min_odds=5.0, max_odds=3.0)
         with self.assertRaises(ValueError):
             odds_builder.build_for_target(self.today, min_odds=0.5, max_odds=5.0)
+
+
+class FailureReasonTests(OddsBuilderTests):
+    """
+    Three very different situations used to produce one message telling the user
+    to "try a lower target". Only one of them is something they can act on, and
+    for the other two that advice sends them round a loop that cannot succeed.
+    """
+
+    def test_no_prices_at_all_is_reported_as_ours_to_fix(self):
+        """
+        The state the live bot was actually in: picks published, none priced,
+        because nothing fetched odds. Lowering the target would never have helped.
+        """
+        leg = self._leg("1.80", 80)
+        leg.market_odds = None
+        leg.save()
+
+        result = odds_builder.build_for_target(self.today, min_odds=3.0, max_odds=5.0)
+
+        self.assertEqual(result.reason, "no_prices")
+        self.assertEqual(result.priced_fixtures, 0)
+
+    def test_a_single_priced_match_says_so(self):
+        self._leg("1.80", 80)
+
+        result = odds_builder.build_for_target(self.today, min_odds=3.0, max_odds=5.0)
+
+        self.assertEqual(result.reason, "too_few_matches")
+        self.assertEqual(result.priced_fixtures, 1)
+
+    def test_an_unreachable_target_reports_what_is_reachable(self):
+        """The one actionable case — so it names the number to aim at."""
+        self._leg("1.10", 90)
+        self._leg("1.12", 90)
+        self._leg("1.15", 90)
+
+        result = odds_builder.build_for_target(self.today, min_odds=5.0, max_odds=10.0)
+
+        self.assertEqual(result.reason, "unreachable")
+        self.assertIsNotNone(result.best_available)
+        # Three short legs multiply to about 1.42 — well under the 5.0 asked for.
+        self.assertLess(float(result.best_available), 5.0)
+        self.assertGreater(float(result.best_available), 1.0)
+
+    def test_a_reachable_target_reports_ok(self):
+        self._leg("1.80", 80)
+        self._leg("1.90", 80)
+
+        result = odds_builder.build_for_target(self.today, min_odds=3.0, max_odds=5.0)
+
+        self.assertEqual(result.reason, "ok")
+        self.assertTrue(result.found)
+        self.assertEqual(result.priced_fixtures, 2)
