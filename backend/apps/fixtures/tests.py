@@ -7,8 +7,11 @@ does not look like overspending, it looks like a parameter bug. These pin the tw
 knobs that decide the bill.
 """
 
+from io import StringIO
 from unittest.mock import patch
 
+from django.core.management import call_command
+from django.core.management.base import CommandError
 from django.test import TestCase, override_settings
 from django.utils import timezone
 
@@ -183,3 +186,77 @@ class SyncLeaguesTests(TestCase):
         )
 
         self.assertEqual(sync_leagues(force=True), 1)
+
+
+@override_settings(API_FOOTBALL_LEAGUES=[39])
+class BackfillTests(TestCase):
+    """
+    History is what makes the ratings mean anything. Without it every team sits
+    at the default and the model prices a coin flip with home advantage.
+    """
+
+    def setUp(self):
+        self.league = League.objects.create(
+            api_id=39, name="Premier League", country="England", season=2026
+        )
+
+    def _node(self, fixture_id, home_goals=2, away_goals=1, status="FT"):
+        return {
+            "fixture": {"id": fixture_id, "date": "2025-08-16T14:00:00+00:00",
+                        "status": {"short": status}, "venue": {"name": "Ground"}},
+            "league": {"round": "Regular Season - 1"},
+            "teams": {"home": {"id": 100, "name": "Home FC"},
+                      "away": {"id": 200, "name": "Away FC"}},
+            "goals": {"home": home_goals, "away": away_goals},
+            "score": {"halftime": {"home": 1, "away": 0}},
+        }
+
+    @patch("apps.fixtures.management.commands.backfill.ApiFootballClient")
+    def test_one_request_per_league_season(self, client_cls):
+        """A season day-by-day would be ~380 requests; by season it is one."""
+        client_cls.return_value.fixtures_by_season.return_value = [self._node(1)]
+
+        call_command("backfill", "--seasons", "3", stdout=StringIO())
+
+        self.assertEqual(client_cls.return_value.fixtures_by_season.call_count, 3)
+        seasons = [c.args[1] for c in client_cls.return_value.fixtures_by_season.call_args_list]
+        self.assertEqual(sorted(seasons), [2023, 2024, 2025])
+
+    @patch("apps.fixtures.management.commands.backfill.ApiFootballClient")
+    def test_results_are_stored_so_ratings_can_use_them(self, client_cls):
+        client_cls.return_value.fixtures_by_season.return_value = [self._node(1, 3, 0)]
+
+        call_command("backfill", "--seasons", "1", stdout=StringIO())
+
+        fixture = Fixture.objects.get(api_id=1)
+        self.assertEqual(fixture.status, Fixture.Status.FINISHED)
+        self.assertEqual((fixture.home_goals, fixture.away_goals), (3, 0))
+        # `raw` is kept so a feature can be re-derived without paying again.
+        self.assertIn("teams", fixture.raw)
+
+    @patch("apps.fixtures.management.commands.backfill.ApiFootballClient")
+    def test_rerunning_updates_rather_than_duplicating(self, client_cls):
+        client_cls.return_value.fixtures_by_season.return_value = [self._node(1)]
+        call_command("backfill", "--seasons", "1", stdout=StringIO())
+        call_command("backfill", "--seasons", "1", stdout=StringIO())
+
+        self.assertEqual(Fixture.objects.filter(api_id=1).count(), 1)
+
+    @patch("apps.fixtures.management.commands.backfill.ApiFootballClient")
+    def test_a_season_the_plan_cannot_see_does_not_abort_the_run(self, client_cls):
+        from apps.fixtures.providers.api_football import ApiFootballError
+
+        client_cls.return_value.fixtures_by_season.side_effect = [
+            ApiFootballError("plan does not include this season"),
+            [self._node(2)],
+        ]
+        out = StringIO()
+        call_command("backfill", "--seasons", "2", stdout=out)
+
+        self.assertIn("skipped", out.getvalue())
+        self.assertEqual(Fixture.objects.count(), 1)
+
+    def test_refuses_without_leagues(self):
+        League.objects.all().delete()
+        with self.assertRaises(CommandError):
+            call_command("backfill", stdout=StringIO())

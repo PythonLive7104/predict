@@ -58,6 +58,16 @@ class ApiFootballClient:
             params |= {"league": league_id, "season": season}
         return self._get("fixtures", **params)
 
+    def fixtures_by_season(self, league_id: int, season: int):
+        """
+        Every fixture of one league season in a single request.
+
+        This is how history is fetched: a season day-by-day would be ~380
+        requests, the same season by league+season is one. It is also the only
+        shape that reaches back beyond the free plan's few-day window.
+        """
+        return self._get("fixtures", league=league_id, season=season)
+
     def fixture_by_id(self, fixture_id: int):
         return self._get("fixtures", id=fixture_id)
 
