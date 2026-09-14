@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Route, Routes } from "react-router-dom";
-import { loginWithTelegram, restoreSession } from "./api";
+import { api, loginWithTelegram, restoreSession } from "./api";
 import Nav from "./components/Nav";
 import Account from "./pages/Account";
 import Picks from "./pages/Picks";
@@ -10,6 +10,23 @@ import { initTelegram, isMiniApp } from "./telegram";
 
 export default function App() {
   const [profile, setProfile] = useState(null);
+
+  // Both surfaces write to the same account, so a plan bought in the bot or a
+  // credit spent here changes the other one's truth. Nothing pushes that across
+  // — so re-read the profile whenever this tab comes back to the foreground,
+  // which is exactly when someone has switched over from Telegram.
+  useEffect(() => {
+    function refreshProfile() {
+      if (document.hidden) return;
+      api.me().then(setProfile).catch(() => {});
+    }
+    document.addEventListener("visibilitychange", refreshProfile);
+    window.addEventListener("focus", refreshProfile);
+    return () => {
+      document.removeEventListener("visibilitychange", refreshProfile);
+      window.removeEventListener("focus", refreshProfile);
+    };
+  }, []);
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
@@ -48,7 +65,10 @@ export default function App() {
           <Route path="/" element={<Picks profile={profile} onProfileChange={setProfile} />} />
           <Route path="/slips" element={<Slips />} />
           <Route path="/record" element={<Record />} />
-          <Route path="/account" element={<Account profile={profile} />} />
+          <Route
+            path="/account"
+            element={<Account profile={profile} onProfileChange={setProfile} />}
+          />
         </Routes>
       ) : (
         <div className="card">

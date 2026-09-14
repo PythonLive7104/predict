@@ -9,11 +9,30 @@ const money = (value) => {
   return Number.isInteger(number) ? `$${number}` : `$${number.toFixed(2)}`;
 };
 
-export default function Account({ profile }) {
+export default function Account({ profile, onProfileChange }) {
   const [plans, setPlans] = useState([]);
   const [busy, setBusy] = useState(null);
   const [error, setError] = useState(null);
   const [signInError, setSignInError] = useState(null);
+  const [syncing, setSyncing] = useState(false);
+
+  /**
+   * Pull the account again on demand.
+   *
+   * The app already re-reads on focus, but someone who buys a plan in the bot
+   * while this tab is open and visible on another screen sees nothing change.
+   * A button costs little and removes the "is it broken?" moment.
+   */
+  async function resync() {
+    setSyncing(true);
+    try {
+      onProfileChange?.(await api.me());
+    } catch {
+      /* leave the existing profile in place rather than blanking the card */
+    } finally {
+      setSyncing(false);
+    }
+  }
 
   async function signIn(telegramUser) {
     setSignInError(null);
@@ -64,12 +83,28 @@ export default function Account({ profile }) {
                 </div>
               </div>
             </div>
+            <p className="detail" style={{ marginTop: 12, marginBottom: 0 }}>
+              ✅ Connected to Telegram
+              {profile.username ? (
+                <> as <strong>@{profile.username}</strong></>
+              ) : null}
+              {" — "}the same account the bot uses, so credits and plans match on
+              both.
+            </p>
             {profile.referral_code && (
-              <p className="detail" style={{ marginTop: 12, marginBottom: 0 }}>
+              <p className="detail" style={{ marginTop: 8, marginBottom: 0 }}>
                 Referral code: <strong>{profile.referral_code}</strong> — both of you
                 get credits when a friend joins with it.
               </p>
             )}
+            <button
+              className="btn"
+              style={{ marginTop: 12 }}
+              onClick={resync}
+              disabled={syncing}
+            >
+              {syncing ? "Refreshing…" : "Refresh from Telegram"}
+            </button>
           </>
         ) : (
           <div className="signin">
