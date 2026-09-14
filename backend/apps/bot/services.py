@@ -48,6 +48,58 @@ def todays_free_picks(limit: int = 5) -> list[Prediction]:
 
 
 @sync_to_async
+def picks_for_span(span: str, limit: int = 12) -> tuple[list, str]:
+    """Free picks across a named span, plus the label to head the list with."""
+    start, end, label = access.span_dates(span)
+    rows = list(
+        access.published_picks(on=start, until=end, tier=Tier.FREE)
+        .order_by("fixture__kickoff", "-confidence")[:limit]
+    )
+    return rows, label
+
+
+@sync_to_async
+def build_odds_slip(target: str, span: str) -> dict | None:
+    """
+    A slip aiming at a payout band. Flattened to plain data before returning:
+    the handler is async and must never touch the ORM.
+    """
+    from apps.bot.keyboards import ODDS_TARGETS
+    from apps.predictions import odds_builder
+
+    band = next((t for t in ODDS_TARGETS if t[0] == target), None)
+    if band is None:
+        return None
+    _key, label, low, high = band
+
+    start, end, span_label = access.span_dates(span)
+    slip = odds_builder.build_for_target(start, end, min_odds=low, max_odds=high)
+    if slip is None:
+        return {"found": False, "target": label, "span": span_label}
+
+    return {
+        "found": True,
+        "target": label,
+        "span": span_label,
+        "odds": str(slip.combined_odds),
+        "confidence": slip.confidence,
+        "legs": [
+            {
+                "home": leg.fixture.home.name,
+                "away": leg.fixture.away.name,
+                "league": leg.fixture.league.name,
+                "kickoff": leg.fixture.kickoff,
+                "market": leg.get_market_display(),
+                "selection": leg.selection_label,
+                "odds": str(leg.market_odds),
+                "confidence": leg.confidence,
+            }
+            for leg in slip.legs
+        ],
+    }
+
+
+@sync_to_async
 def vip_slip_for_today():
     return access.slips_for().first()
 

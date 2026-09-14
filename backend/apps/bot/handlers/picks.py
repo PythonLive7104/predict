@@ -12,9 +12,11 @@ router = Router(name="picks")
 def _teaser(prediction) -> str:
     """Free view: the fixture and the confidence, but not the selection."""
     fx = prediction.fixture
+    # The day is shown as well as the time: a weekend list spans three dates and
+    # "15:00" alone would leave the reader guessing which one.
     return (
         f"<b>{fx.home.name} vs {fx.away.name}</b>\n"
-        f"{fx.league.name} · {fx.kickoff:%H:%M UTC}\n"
+        f"{fx.league.name} · {fx.kickoff:%a %d %b, %H:%M UTC}\n"
         f"Market: {prediction.get_market_display()}\n"
         f"Confidence: <b>{prediction.confidence}%</b>"
     )
@@ -38,16 +40,33 @@ def _full(prediction) -> str:
 @router.message(F.text == kb.BTN_TODAY)
 async def todays_picks(message: Message) -> None:
     await services.get_or_create_user(message.from_user)
-    picks = await services.todays_free_picks()
+    await _send_span(message, "today")
+
+
+@router.callback_query(F.data.startswith("picks:"))
+async def switch_span(callback: CallbackQuery) -> None:
+    await services.get_or_create_user(callback.from_user)
+    await callback.answer()
+    await _send_span(callback.message, callback.data.split(":", 1)[1])
+
+
+async def _send_span(message: Message, span: str) -> None:
+    picks, label = await services.picks_for_span(span)
 
     if not picks:
         await message.answer(
-            "No picks published yet for today — the model runs a few hours before "
-            "the first kickoff, once team news lands."
+            f"<b>{label}</b>\n\nNothing published for this window yet. Picks are "
+            "generated a few hours before the first kickoff, once team news lands.",
+            reply_markup=kb.span_keyboard(span),
         )
         return
 
-    await message.answer(f"<b>Today's picks</b> — {len(picks)} fixtures analysed")
+    # One header carrying the day switcher, then the picks. Repeating the
+    # switcher under every pick would bury the list in buttons.
+    await message.answer(
+        f"<b>{label}</b> — {len(picks)} pick{'s' if len(picks) != 1 else ''}",
+        reply_markup=kb.span_keyboard(span),
+    )
     for prediction in picks:
         await message.answer(_teaser(prediction), reply_markup=kb.unlock_keyboard(prediction.pk))
 

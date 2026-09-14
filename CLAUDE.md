@@ -131,6 +131,22 @@ ships. The **best** picks go free, deliberately — the free tier is the shop wi
 *and* what the public record is judged on. One free pick per fixture, so the slate
 shows breadth rather than four angles on one match.
 
+**Date spans** — `access.span_dates` resolves "today" / "tomorrow" / "weekend"
+to a date pair. Weekend means Friday–Sunday, and resolves to the *coming*
+weekend Monday–Thursday but the one in progress Friday–Sunday: people ask for
+weekend picks meaning whichever weekend they can still bet on.
+
+**Odds targets** (`apps/predictions/odds_builder.py`) — "give me 3 odds" is a
+request for a payout, not a leg count, so the leg count falls out of the
+arithmetic. Among combinations landing in the band, the chosen one maximises the
+*product of the legs' probabilities* — not the leg confidences, which is a
+different and worse answer: three legs at 85% beat two at 88% once they
+multiply. The candidate pool deliberately keeps several markets per fixture;
+taking only the most confident pick per match sounds right and makes every
+target above ~2.0 unreachable, because the safety markets are always both the
+most confident and the shortest-priced. One-leg-per-fixture is enforced at
+selection time instead.
+
 Slips (`build_slips`) are what actually convert. Two rules that matter:
 **one leg per fixture** (correlated legs make the combined odds lie about the real
 risk) and **no padding** — a thin slate legitimately produces no slip, and

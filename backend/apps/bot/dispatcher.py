@@ -58,7 +58,7 @@ async def bot_session() -> AsyncIterator[Bot]:
 def get_dispatcher() -> Dispatcher:
     global _dispatcher
     if _dispatcher is None:
-        from .handlers import admin, menu, picks, purchase
+        from .handlers import admin, menu, odds, picks, purchase
 
         _dispatcher = Dispatcher()
         # Admin first: its callback filter is narrow, and `purchase` ends with a
@@ -66,6 +66,7 @@ def get_dispatcher() -> Dispatcher:
         _dispatcher.include_router(admin.router)
         _dispatcher.include_router(menu.router)
         _dispatcher.include_router(picks.router)
+        _dispatcher.include_router(odds.router)
         _dispatcher.include_router(purchase.router)
     return _dispatcher
 

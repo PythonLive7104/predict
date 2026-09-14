@@ -9,7 +9,7 @@ for what.
 """
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 
 from django.db import transaction
 from django.db.models import Count, Q
@@ -66,14 +66,49 @@ def can_view(user, prediction: Prediction) -> bool:
     return PredictionView.objects.filter(user=user, prediction=prediction).exists()
 
 
-def published_picks(on: date | None = None, tier: str | None = None):
+def published_picks(
+    on: date | None = None, tier: str | None = None, until: date | None = None
+):
+    """
+    Published picks for one day, or a span when `until` is given.
+
+    `published_at__isnull=False` is not optional alongside a tier filter: tier
+    defaults to FREE on unpublished rows, so filtering on tier alone counts picks
+    that never went out.
+    """
     on = on or timezone.now().date()
     qs = (
-        Prediction.objects.filter(published_at__isnull=False, fixture__kickoff__date=on)
+        Prediction.objects.filter(
+            published_at__isnull=False,
+            fixture__kickoff__date__gte=on,
+            fixture__kickoff__date__lte=until or on,
+        )
         .select_related("fixture__home", "fixture__away", "fixture__league")
         .order_by("fixture__kickoff", "-confidence")
     )
     return qs.filter(tier=tier) if tier else qs
+
+
+def span_dates(span: str, today: date | None = None) -> tuple[date, date, str]:
+    """
+    Resolve a named span to (start, end, label).
+
+    "Weekend" means Friday through Sunday — and from Monday to Thursday that is
+    the *coming* weekend, while on Saturday it is the one in progress. Users ask
+    for "weekend picks" meaning whichever weekend they can still bet on.
+    """
+    today = today or timezone.now().date()
+    if span == "tomorrow":
+        day = today + timedelta(days=1)
+        return day, day, "Tomorrow"
+    if span == "weekend":
+        # Monday is 0, Friday 4, Sunday 6.
+        if today.weekday() >= 4:
+            friday = today - timedelta(days=today.weekday() - 4)
+        else:
+            friday = today + timedelta(days=4 - today.weekday())
+        return friday, friday + timedelta(days=2), "This weekend"
+    return today, today, "Today"
 
 
 def slips_for(on: date | None = None):
