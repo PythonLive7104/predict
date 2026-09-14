@@ -87,13 +87,21 @@ class BroadcastContentTests(TestCase):
             market_odds=Decimal("1.75"), published_at=timezone.now(),
         )
 
-    def test_free_push_shows_the_hook_but_not_the_pick(self):
-        """If the push contains the pick, nobody ever spends a credit."""
+    def test_free_push_names_the_fixtures_and_nothing_else(self):
+        """
+        Matches the locked in-bot view: market, confidence and selection all
+        wait for the unlock, so the push cannot reveal any of them either.
+        """
         picks = [self._pick(85), self._pick(72)]
         broadcast = build_free_picks_broadcast(picks)
 
-        self.assertIn("85%", broadcast.body)
-        self.assertIn("Match Result", broadcast.body)
+        for pick in picks:
+            self.assertIn(pick.fixture.home.name, broadcast.body)
+            self.assertIn(pick.fixture.away.name, broadcast.body)
+
+        self.assertNotIn("85%", broadcast.body)
+        self.assertNotIn("72%", broadcast.body)
+        self.assertNotIn("Match Result", broadcast.body)
 
         # For 1X2 the label is a team name, and both teams appear in the fixture
         # line — so naming one reveals nothing. What must not leak is a side being
@@ -110,7 +118,7 @@ class BroadcastContentTests(TestCase):
 
         body = build_free_picks_broadcast([pick]).body
 
-        self.assertIn("80%", body)
+        self.assertNotIn("80%", body)
         self.assertNotIn("Yes", body)
         self.assertNotIn(pick.selection_label, body)
 

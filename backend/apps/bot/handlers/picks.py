@@ -10,15 +10,22 @@ router = Router(name="picks")
 
 
 def _teaser(prediction) -> str:
-    """Free view: the fixture and the confidence, but not the selection."""
+    """
+    Locked view: the fixture only. Market, confidence and selection all arrive
+    together on unlock.
+
+    Note the trade this makes. Confidence was the hook — "86%" is what decided
+    which match was worth a credit — so with it hidden every row reads the same
+    and the unlock is a blind purchase. Kept deliberately per the product
+    owner's decision; if conversion drops, this is the first thing to revisit.
+    """
     fx = prediction.fixture
     # The day is shown as well as the time: a weekend list spans three dates and
     # "15:00" alone would leave the reader guessing which one.
     return (
         f"<b>{fx.home.name} vs {fx.away.name}</b>\n"
         f"{fx.league.name} · {fx.kickoff:%a %d %b, %H:%M UTC}\n"
-        f"Market: {prediction.get_market_display()}\n"
-        f"Confidence: <b>{prediction.confidence}%</b>"
+        f"🔒 Analysis locked"
     )
 
 

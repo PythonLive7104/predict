@@ -209,6 +209,12 @@ corrected result can never leave a stale win-rate on the site.
 
 ## Notifications
 
+The free push and the locked in-bot view show the same thing: the fixture and
+nothing else. This is deliberately weaker than it was — market and confidence
+used to appear in both, and the confidence figure was the hook that decided
+which match was worth a credit. The product owner chose full concealment; if
+conversion or push open-rates fall, that is the first thing to revisit.
+
 Push is the retention engine — a prediction bot nobody hears from is dead — and
 it is also the fastest way to get banned. Two rules, both enforced in
 `apps/bot/notifications.py`:
@@ -224,7 +230,7 @@ it is also the fastest way to get banned. Two rules, both enforced in
 
 | Push | Audience | Contents |
 |---|---|---|
-| Free picks | everyone reachable | fixture, market, confidence — **never the selection**, or nobody spends a credit |
+| Free picks | everyone reachable | **fixture only** — market, confidence and selection all wait for the unlock |
 | Banker of the Day | current VIP subscribers | the actual legs; they've paid for them |
 
 Only the banker is pushed, not every slip — one notification per slip is spam.

@@ -47,17 +47,21 @@ def audience(target_tier: str = "") -> "models.QuerySet[User]":
 
 
 def build_free_picks_broadcast(picks) -> Broadcast | None:
-    """Teasers only — the push must not give away what the unlock is for."""
+    """
+    Fixtures only — everything else waits for the unlock.
+
+    Deliberately weaker than it could be: market and confidence used to appear
+    here and were the reason a lock-screen alert earned a tap. They now match
+    the locked in-bot view instead, so nothing reveals what the pick is before a
+    credit is spent. If open rates fall, this is the cause.
+    """
     if not picks:
         return None
 
     lines = [f"⚽ <b>Today's free picks</b> — {len(picks)} matches analysed", ""]
     for pick in picks:
         fixture = pick.fixture
-        lines.append(
-            f"• {fixture.home.name} v {fixture.away.name} — "
-            f"{pick.get_market_display()} · <b>{pick.confidence}%</b>"
-        )
+        lines.append(f"• {fixture.home.name} v {fixture.away.name}")
     lines += ["", "Open the bot to unlock them."]
 
     return Broadcast.objects.create(

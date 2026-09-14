@@ -140,3 +140,39 @@ class OddsSlipServiceTests(TestCase):
             self.assertIsNotNone(slip, f"preset {key} is not resolvable")
             self.assertEqual(slip["target"], label)
             self.assertLess(low, high)
+
+
+class TeaserTests(TestCase):
+    """What a locked pick may and may not reveal."""
+
+    def setUp(self):
+        self.prediction = Prediction.objects.create(
+            fixture=make_fixture(
+                league=make_league(), home=make_team("Man City"), away=make_team("Burnley"),
+            ),
+            market=Market.DOUBLE_CHANCE, selection="home_draw",
+            probability=0.86, confidence=86,
+            market_odds=Decimal("1.12"), tier=Tier.FREE, published_at=timezone.now(),
+        )
+
+    def test_locked_view_reveals_only_the_fixture(self):
+        from apps.bot.handlers.picks import _teaser
+
+        text = _teaser(self.prediction)
+
+        self.assertIn("Man City", text)
+        self.assertIn("Burnley", text)
+        # None of these may appear before a credit is spent.
+        self.assertNotIn("86", text)
+        self.assertNotIn("Double Chance", text)
+        self.assertNotIn("Man City or Draw", text)
+        self.assertNotIn("1.12", text)
+
+    def test_unlocked_view_reveals_everything(self):
+        from apps.bot.handlers.picks import _full
+
+        text = _full(self.prediction)
+
+        self.assertIn("Man City or Draw", text)
+        self.assertIn("Double Chance", text)
+        self.assertIn("86", text)
