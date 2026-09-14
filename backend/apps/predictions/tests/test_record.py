@@ -111,3 +111,85 @@ class SelectionLabelTests(TestCase):
             prediction.selection_label,
             selection_label_for("dc", "home_draw", "Man City", "Burnley"),
         )
+
+
+class AdminEntitlementTests(TestCase):
+    """
+    The owner should not have to buy their own product. Anyone who can reach the
+    Django admin already reads every prediction there, so gating the bot against
+    them protects nothing.
+    """
+
+    def setUp(self):
+        from django.contrib.auth import get_user_model
+
+        self.User = get_user_model()
+
+    def _user(self, **flags):
+        from apps.billing.models import Wallet
+
+        user = self.User.objects.create(username=f"u{self.User.objects.count()}", **flags)
+        Wallet.objects.create(user=user)
+        return user
+
+    def test_a_superuser_has_unlimited_vip_and_no_expiry(self):
+        from apps.predictions.access import entitlement_for
+
+        e = entitlement_for(self._user(is_superuser=True, is_staff=True))
+
+        self.assertTrue(e.unlimited)
+        self.assertTrue(e.vip)
+        self.assertIsNone(e.expires_at, "an admin's access is not a lapsing subscription")
+        self.assertEqual(e.plan_name, "Admin")
+
+    def test_staff_without_superuser_also_qualify(self):
+        from apps.predictions.access import entitlement_for
+
+        self.assertTrue(entitlement_for(self._user(is_staff=True)).unlimited)
+
+    def test_a_superuser_who_is_not_staff_still_qualifies(self):
+        """The flags are independent; checking only one locks out the owner."""
+        from apps.predictions.access import entitlement_for
+
+        self.assertTrue(entitlement_for(self._user(is_superuser=True)).unlimited)
+
+    def test_an_ordinary_user_is_unaffected(self):
+        from apps.predictions.access import entitlement_for
+
+        e = entitlement_for(self._user())
+
+        self.assertFalse(e.unlimited)
+        self.assertFalse(e.vip)
+        self.assertEqual(e.plan_name, "Free")
+
+    def test_an_admin_can_view_any_pick_without_unlocking(self):
+        from apps.predictions.access import can_view
+        from apps.predictions.models import Market, Prediction
+
+        from .factories import make_fixture
+
+        pick = Prediction.objects.create(
+            fixture=make_fixture(), market=Market.MATCH_RESULT, selection="home",
+            probability=0.7, confidence=70,
+        )
+        self.assertTrue(can_view(self._user(is_superuser=True), pick))
+        self.assertFalse(can_view(self._user(), pick))
+
+    def test_admins_are_in_the_vip_broadcast_audience(self):
+        """
+        audience() walks the same shared rule, so the staff carve-out reaches it
+        automatically — a hand-written .filter() on subscriptions would not.
+        """
+        from apps.bot.notifications import audience
+        from apps.predictions.models import Tier
+
+        admin = self._user(is_superuser=True)
+        admin.telegram_id = 9001
+        admin.save()
+        plain = self._user()
+        plain.telegram_id = 9002
+        plain.save()
+
+        vip = list(audience(Tier.VIP))
+        self.assertIn(admin, vip)
+        self.assertNotIn(plain, vip)

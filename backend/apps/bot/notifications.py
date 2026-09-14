@@ -15,7 +15,7 @@ import logging
 from django.utils import timezone
 
 from apps.accounts.models import User
-from apps.predictions.access import current_subscription
+from apps.predictions.access import has_vip
 from apps.predictions.models import Slip, Tier
 
 from .models import Broadcast
@@ -37,11 +37,12 @@ def audience(target_tier: str = "") -> "models.QuerySet[User]":
         return reachable
 
     # Filtered in Python via the shared entitlement rule rather than re-expressed
-    # as a query, so "is this subscription current" has exactly one definition.
+    # as a query, so "may this user see VIP content" has exactly one definition —
+    # including the staff carve-out, which a hand-written .filter() would miss.
     vip_ids = [
         user.pk
         for user in reachable.prefetch_related("subscriptions__plan")
-        if (sub := current_subscription(user)) and sub.plan.includes_vip_slips
+        if has_vip(user)
     ]
     return reachable.filter(pk__in=vip_ids)
 

@@ -155,6 +155,15 @@ the moment any leg loses; nothing later can save it.
 
 ## Money
 
+**Superusers and staff are entitled to everything, with no expiry**
+(`access.is_admin`). The owner should not have to buy their own product to test
+it, and anyone who can reach the Django admin already reads every prediction
+there — so gating the bot against them protects nothing. Both flags are checked
+because they are independent: a superuser without `is_staff` is unusual but
+legal. `has_vip()` is the single definition shared by `entitlement_for` and
+`notifications.audience`, so the carve-out reaches the VIP broadcast list too; a
+hand-written `.filter(subscriptions__...)` would silently miss it.
+
 Credits are a **ledger** (`CreditEntry`), not a mutable counter — `Wallet.balance`
 is a cache the ledger can rebuild. Disputes in this niche are constant ("the bot
 ate my credits") and only a ledger settles them.

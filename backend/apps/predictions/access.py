@@ -43,8 +43,52 @@ def current_subscription(user) -> Subscription | None:
     return subscription if subscription and subscription.is_current else None
 
 
+def is_admin(user) -> bool:
+    """
+    Superusers and staff see everything, with no expiry.
+
+    The owner should not have to buy their own product to check that it works,
+    and anyone who can reach the Django admin already reads every prediction
+    there — so gating the bot against them protects nothing and only makes the
+    product harder to run.
+
+    Both flags are checked because they are independent: a superuser without
+    `is_staff` is unusual but legal, and would otherwise be locked out of the
+    thing they own.
+    """
+    return bool(getattr(user, "is_superuser", False) or getattr(user, "is_staff", False))
+
+
+def has_vip(user) -> bool:
+    """
+    One definition of "may see VIP content", shared by the entitlement and the
+    broadcast audience.
+
+    Kept separate from `entitlement_for` because the audience filter walks every
+    reachable user, and `entitlement_for` creates a Wallet as a side effect —
+    fine for one user, a write per row in a loop.
+    """
+    if is_admin(user):
+        return True
+    active = current_subscription(user)
+    return bool(active and active.plan.includes_vip_slips)
+
+
 def entitlement_for(user) -> Entitlement:
     wallet, _ = Wallet.objects.get_or_create(user=user)
+
+    if is_admin(user):
+        # No expiry: an admin's access is a property of the account, not a
+        # subscription that lapses. `expires_at=None` renders as "no renewal
+        # date" everywhere a plan is shown, which is the truth.
+        return Entitlement(
+            plan_name="Admin",
+            expires_at=None,
+            unlimited=True,
+            vip=True,
+            credits=wallet.balance,
+        )
+
     active = current_subscription(user)
     return Entitlement(
         plan_name=active.plan.name if active else "Free",
