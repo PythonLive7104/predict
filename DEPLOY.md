@@ -170,6 +170,25 @@ demo, or wipe the database before pointing it at live data:
 docker compose down -v && docker compose up -d
 ```
 
+## Deploying a change
+
+```bash
+cd /opt/predict && ./deploy.sh
+```
+
+Pulls, rebuilds, force-recreates and then *verifies* — API, admin, webhook
+endpoint, Telegram registration, update backlog, worker and queue. It exits
+non-zero if any check fails, and names the command to run next.
+
+`--force-recreate` is not optional in that script. Compose reports "Running" and
+leaves the old container in place even when the image has changed, which is how
+a deploy silently ships nothing.
+
+Every check exists because that failure has already happened once, and all of
+them were invisible from Telegram: the webhook endpoint returns immediately, so
+Telegram treats a broken delivery as a success, never retries, and never
+reports. The bot just stops answering.
+
 ## Operations
 
 ```bash
