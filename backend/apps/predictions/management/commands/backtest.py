@@ -64,6 +64,9 @@ class Command(BaseCommand):
         # breaks even at 1.33.
         tally = defaultdict(lambda: {"n": 0, "won": 0, "priced": 0,
                                      "staked": 0.0, "returned": 0.0})
+        # Calibration: does a stated 70% actually win 70%? The product is sold on
+        # the confidence figure meaning something, and nothing has ever checked.
+        buckets = defaultdict(lambda: {"n": 0, "won": 0, "claimed": 0.0})
         scored = 0
 
         for index, fixture in enumerate(fixtures):
@@ -86,6 +89,12 @@ class Command(BaseCommand):
                         row["won"] += outcome == Outcome.WON
                         scored += 1
 
+                        band = min(int(prediction.confidence // 5) * 5, 95)
+                        b = buckets[band]
+                        b["n"] += 1
+                        b["won"] += outcome == Outcome.WON
+                        b["claimed"] += prediction.confidence
+
                         price = self._best_price(prediction)
                         if price:
                             row["priced"] += 1
@@ -102,6 +111,7 @@ class Command(BaseCommand):
                 ratings.update_strengths(fixture.league, as_of=fixture.kickoff)
 
         self._report(tally, scored, warmup, min_conf)
+        self._report_calibration(buckets)
 
     def _price(self, fixture, min_conf, persist):
         lam_h, lam_a = expected_goals_for(fixture, as_of=fixture.kickoff)
@@ -125,6 +135,59 @@ class Command(BaseCommand):
                 prediction.save()
             out.append(prediction)
         return out
+
+    def _report_calibration(self, buckets) -> None:
+        """
+        Claimed confidence against what actually happened.
+
+        This is the one number the product is sold on. A model that says 70% and
+        wins 58% is not slightly wrong — it is making a false claim in public,
+        and the record will eventually say so. A model that says 70% and wins
+        69% has something almost nobody in this niche can prove.
+        """
+        rows = [(band, data) for band, data in sorted(buckets.items()) if data["n"] >= 30]
+        if not rows:
+            return
+
+        self.stdout.write("")
+        self.stdout.write(self.style.MIGRATE_HEADING(
+            "Calibration — is the confidence figure honest?"
+        ))
+        self.stdout.write(
+            f"  {'CONFIDENCE':<14}{'PICKS':>7}{'CLAIMED':>9}{'ACTUAL':>9}{'GAP':>9}"
+        )
+        self.stdout.write(f"  {'-' * 48}")
+
+        worst = 0.0
+        for band, data in rows:
+            claimed = data["claimed"] / data["n"]
+            actual = data["won"] / data["n"] * 100
+            gap = actual - claimed
+            worst = max(worst, abs(gap))
+            flag = "" if abs(gap) <= 3 else ("  over-confident" if gap < 0 else "  under-confident")
+            self.stdout.write(
+                f"  {f'{band}-{band + 4}%':<14}{data['n']:>7}{claimed:>8.1f}%"
+                f"{actual:>8.1f}%{gap:>+8.1f}%{flag}"
+            )
+
+        self.stdout.write("")
+        if worst <= 3:
+            self.stdout.write(self.style.SUCCESS(
+                "  Well calibrated — every band lands within 3 points of its claim.\n"
+                "  That is a provable property, and the thing worth selling."
+            ))
+        elif worst <= 8:
+            self.stdout.write(self.style.WARNING(
+                f"  Off by up to {worst:.0f} points. Usable, but the stated figure\n"
+                "  overstates some bands — worth a calibration adjustment before\n"
+                "  the record is marketed on it."
+            ))
+        else:
+            self.stdout.write(self.style.ERROR(
+                f"  Off by up to {worst:.0f} points. The confidence figure does not\n"
+                "  mean what it says, and the public record will eventually show it.\n"
+                "  Fix this before selling on calibration."
+            ))
 
     @staticmethod
     def _best_price(prediction) -> float | None:

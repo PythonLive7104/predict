@@ -226,3 +226,54 @@ class BacktestRoiTests(TestCase):
         roi = (rate * price - 1) * 100
         self.assertLess(roi, 0)
         self.assertAlmostEqual(1 / rate, 1.333, places=2, msg="break-even at 75%")
+
+
+class CalibrationTests(TestCase):
+    """
+    The product is sold on the confidence figure meaning something. A model that
+    says 70% and wins 58% is not slightly wrong — it is making a false claim in
+    public, and its own record will eventually prove it.
+    """
+
+    def _report(self, buckets):
+        from io import StringIO
+
+        from apps.predictions.management.commands.backtest import Command
+
+        cmd = Command()
+        cmd.stdout = StringIO()
+        cmd._report_calibration(buckets)
+        return cmd.stdout.getvalue()
+
+    @staticmethod
+    def _band(n, won, claimed):
+        return {"n": n, "won": won, "claimed": claimed * n}
+
+    def test_a_well_calibrated_model_is_recognised(self):
+        report = self._report({
+            60: self._band(200, 122, 61.0),   # claims 61, wins 61
+            70: self._band(150, 105, 70.0),   # claims 70, wins 70
+        })
+        self.assertIn("Well calibrated", report)
+
+    def test_overconfidence_is_called_out(self):
+        """Claiming 75 and winning 58 is the failure that matters commercially."""
+        report = self._report({
+            75: self._band(300, 174, 75.0),   # claims 75, wins 58
+        })
+        self.assertIn("over-confident", report)
+        self.assertIn("does not", report)
+
+    def test_a_modest_gap_is_flagged_without_alarm(self):
+        report = self._report({
+            65: self._band(200, 120, 65.0),   # claims 65, wins 60
+        })
+        self.assertIn("Usable", report)
+
+    def test_thin_bands_are_not_reported(self):
+        """Ten picks cannot tell you anything about calibration."""
+        self.assertEqual(self._report({70: self._band(10, 3, 70.0)}), "")
+
+    def test_the_gap_is_actual_minus_claimed(self):
+        report = self._report({70: self._band(100, 60, 70.0)})
+        self.assertIn("-10.0%", report)
