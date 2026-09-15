@@ -15,7 +15,7 @@ from django.db import transaction
 from apps.fixtures.models import Fixture
 from apps.predictions.models import Market, Prediction, selection_label_for
 
-from . import llm, poisson, ratings
+from . import calibration, llm, poisson, ratings
 
 logger = logging.getLogger(__name__)
 
@@ -105,7 +105,14 @@ def build_stat_pack(fixture: Fixture) -> dict:
 
 
 def candidates_from(probs: poisson.MarketProbabilities) -> list[Candidate]:
-    """Best selection per market. One pick per market, never a spread of hedges."""
+    """
+    Best selection per market. One pick per market, never a spread of hedges.
+
+    The winning selection is chosen on the raw probability — calibration is
+    monotonic, so it never changes which side is favoured — and the returned
+    probability is calibrated, because that is the number a user is shown, the
+    number the publish gate tests, and the number `edge` is computed from.
+    """
     out = []
 
     best_1x2 = max(
@@ -132,7 +139,10 @@ def candidates_from(probs: poisson.MarketProbabilities) -> list[Candidate]:
         dc = ("draw_away", probs.draw + probs.away)
     out.append(Candidate(Market.DOUBLE_CHANCE, *dc))
 
-    return out
+    return [
+        Candidate(c.market, c.selection, calibration.calibrate(c.probability))
+        for c in out
+    ]
 
 
 def _best_market_odds(fixture: Fixture, market: str, selection: str) -> float | None:

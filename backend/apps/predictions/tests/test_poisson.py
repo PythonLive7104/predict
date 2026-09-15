@@ -95,9 +95,23 @@ class DoubleChanceSelectionTests(SimpleTestCase):
                 self.assertNotEqual(self._dc(lam_home, lam_away).selection, "home_away")
 
     def test_double_chance_probability_matches_its_two_outcomes(self):
+        """
+        Before calibration the candidate's probability WAS the raw sum. It is now
+        the calibrated one — the raw sum is what the model computes, the
+        calibrated figure is what it has been shown to deliver — so the identity
+        is asserted against the uncalibrated engine.
+        """
+        from django.test import override_settings
+
+        with override_settings(CALIBRATION_SLOPE=1.0, CALIBRATION_INTERCEPT=0.0):
+            probs = poisson.market_probabilities(2.9, 0.8)
+            candidate = self._dc(2.9, 0.8)
+            self.assertAlmostEqual(candidate.probability, probs.home + probs.draw, places=9)
+
+    def test_calibration_lowers_the_double_chance_claim(self):
+        """The market that overstated itself most is the one most corrected."""
         probs = poisson.market_probabilities(2.9, 0.8)
-        candidate = self._dc(2.9, 0.8)
-        self.assertAlmostEqual(candidate.probability, probs.home + probs.draw, places=9)
+        self.assertLess(self._dc(2.9, 0.8).probability, probs.home + probs.draw)
 
 
 class VenueModeTests(SimpleTestCase):

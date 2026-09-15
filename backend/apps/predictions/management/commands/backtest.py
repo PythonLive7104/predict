@@ -228,9 +228,12 @@ class Command(BaseCommand):
             rate = row["won"] / row["n"] * 100 if row["n"] else 0
             total_n += row["n"]
             total_won += row["won"]
+            # Below 30 priced picks the ROI is noise wearing a decimal point —
+            # +82.5% from four bets says nothing, and printing it invites
+            # someone to quote it.
             roi = (
                 f"{(row['returned'] - row['staked']) / row['staked'] * 100:>+8.1f}%"
-                if row["staked"] else f"{'—':>9}"
+                if row["priced"] >= 30 else f"{'—':>9}"
             )
             self.stdout.write(
                 f"  {labels.get(market, market):<24}{row['n']:>7}{row['won']:>7}"
@@ -243,16 +246,18 @@ class Command(BaseCommand):
         overall = total_won / total_n * 100 if total_n else 0
         self.stdout.write(f"  {'—' * 44}")
         overall_roi = (
-            f"{(returned - staked) / staked * 100:>+8.1f}%" if staked else f"{'—':>9}"
+            f"{(returned - staked) / staked * 100:>+8.1f}%"
+            if priced >= 30 else f"{'—':>9}"
         )
         self.stdout.write(self.style.SUCCESS(
             f"  {'ALL MARKETS':<24}{total_n:>7}{total_won:>7}{overall:>7.1f}%"
             f"{priced:>8}{overall_roi}"
         ))
         self.stdout.write("")
-        if not staked:
+        if priced < 30:
             self.stdout.write(self.style.WARNING(
-                "  No ROI: none of these fixtures has stored odds, so profitability\n"
+                f"  No ROI: only {priced} of {total_n} picks have a stored price, so\n"
+                "  profitability is unmeasured — a figure from that few bets is noise.\n"
                 "  is unmeasured. Strike rate alone decides nothing — a market can\n"
                 "  win three times in four and still lose money at short prices.\n"
                 "  Fetch prices first:  manage.py backfill_odds --sample 20"

@@ -279,6 +279,13 @@ PREDICTION_MODEL = env("PREDICTION_MODEL", default="gpt-5.6-terra")
 # Guard rail: never publish a pick the stats layer isn't at least this sure of.
 MIN_PUBLISH_CONFIDENCE = env("MIN_PUBLISH_CONFIDENCE")
 
+# Calibration of the engine's raw probabilities, fitted against 22,660 graded
+# picks: every band claimed 5-13 points more than it delivered, and the bias was
+# linear. Set slope 1.0 / intercept 0.0 to disable. REFIT after a season of live
+# picks — `manage.py backtest` prints the table the fit needs.
+CALIBRATION_SLOPE = env.float("CALIBRATION_SLOPE", default=0.808)
+CALIBRATION_INTERCEPT = env.float("CALIBRATION_INTERCEPT", default=0.0411)
+
 # --- Telegram -------------------------------------------------------------
 
 TELEGRAM_BOT_TOKEN = env("TELEGRAM_BOT_TOKEN", default="")

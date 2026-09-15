@@ -85,6 +85,20 @@ flag to keep in sync. In Telegram the app posts initData to
 
 Each published `Prediction` freezes `stat_snapshot` and `engine_version`, so the
 record stays auditable and a regression is attributable to a version.
+**Calibration** (`engine/calibration.py`) — the raw model is systematically
+over-confident. Measured over 22,660 graded picks across three real seasons,
+every band came in 5-13 points below its claim, almost perfectly linearly
+(`actual = 4.11 + 0.808 x claimed`, max residual 3.1). The cause is structural:
+Poisson treats its estimated scoring rates as exact when they carry real error,
+which narrows the distribution and pushes probabilities toward the extremes.
+
+The correction is applied to the *selected candidate*, not the score matrix —
+the matrix must stay internally coherent, while what needs fixing is the number
+shown to a user, tested by the publish gate and used for `edge`. It is monotonic,
+so it never changes which side is favoured. **Refit it** (`CALIBRATION_SLOPE`,
+`CALIBRATION_INTERCEPT`) after a season of live picks; `manage.py backtest`
+prints the table the fit needs.
+
 `MIN_PUBLISH_CONFIDENCE` (default 55) is a hard gate — below it, a pick is stored
 but never published.
 
