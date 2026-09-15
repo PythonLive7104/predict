@@ -11,11 +11,21 @@ from .factories import make_fixture, make_league, make_team
 
 
 def make_prediction(fixture, market=Market.MATCH_RESULT, selection="home",
-                    confidence=70, odds="1.80"):
+                    confidence=70, odds="1.80", edge=None):
+    """
+    A pick as the pipeline actually stores one — edge included.
+
+    Publishing now gates on edge, so a helper that left it null would exclude
+    every pick and quietly turn these tests into assertions about an empty list.
+    """
+    probability = confidence / 100
+    price = Decimal(odds) if odds else None
+    if edge is None and price is not None:
+        edge = float(price) * probability - 1
     return Prediction.objects.create(
         fixture=fixture, market=market, selection=selection,
-        probability=confidence / 100, confidence=confidence,
-        market_odds=Decimal(odds),
+        probability=probability, confidence=confidence,
+        market_odds=price, edge=edge,
     )
 
 
@@ -263,3 +273,88 @@ class FreeSlateDiversityTests(TestCase):
         self.assertEqual(result["free"], 1)
         self.assertEqual(result["vip"], 1)
         self.assertEqual(Prediction.objects.filter(published_at__isnull=False).count(), 2)
+
+
+@override_settings(MIN_PUBLISH_CONFIDENCE=55, PUBLISH_ON_EDGE=True, MIN_EDGE=0.0)
+class EdgeGateTests(TestCase):
+    """
+    Publishing on value rather than likelihood.
+
+    Three seasons of backtest: double chance wins 75% of the time and loses
+    about 10p in the pound, because it prices at 1.10-1.30 and breaks even at
+    1.33. Ranking on confidence hands it the slate every time — it combines two
+    outcomes out of three, so it is always the most confident pick on the board.
+    """
+
+    def setUp(self):
+        self.league = make_league()
+        self.n = 0
+
+    def _fixture(self):
+        self.n += 1
+        return make_fixture(
+            league=self.league,
+            home=make_team(f"H{self.n}"), away=make_team(f"A{self.n}"),
+        )
+
+    def test_a_confident_pick_at_a_bad_price_is_not_published(self):
+        """The double chance problem, exactly: 80% at 1.15 is a losing bet."""
+        make_prediction(self._fixture(), market=Market.DOUBLE_CHANCE,
+                        confidence=80, odds="1.15")
+
+        result = publish_daily()
+
+        self.assertEqual(result["total"], 0)
+
+    def test_a_less_confident_pick_at_a_good_price_is_published(self):
+        make_prediction(self._fixture(), market=Market.MATCH_RESULT,
+                        confidence=60, odds="1.90")   # edge +14%
+
+        result = publish_daily()
+
+        self.assertEqual(result["total"], 1)
+
+    def test_value_outranks_confidence_for_the_free_slate(self):
+        """The free tier is what the public record is judged on."""
+        weak_value = make_prediction(
+            self._fixture(), market=Market.DOUBLE_CHANCE, confidence=88, odds="1.20"
+        )   # edge +5.6%
+        strong_value = make_prediction(
+            self._fixture(), market=Market.MATCH_RESULT, confidence=62, odds="1.95"
+        )   # edge +20.9%
+
+        publish_daily(free_count=1)
+
+        strong_value.refresh_from_db()
+        weak_value.refresh_from_db()
+        self.assertEqual(strong_value.tier, Tier.FREE)
+        self.assertEqual(weak_value.tier, Tier.VIP)
+
+    def test_an_unpriced_pick_is_excluded(self):
+        """
+        Value cannot be assessed without a price, and publishing something we
+        cannot justify is the habit this gate exists to break.
+        """
+        make_prediction(self._fixture(), confidence=85, odds=None)
+
+        self.assertEqual(publish_daily()["total"], 0)
+
+    @override_settings(MIN_EDGE=0.05)
+    def test_the_required_margin_is_configurable(self):
+        make_prediction(self._fixture(), confidence=60, odds="1.70")   # edge +2%
+        make_prediction(self._fixture(), confidence=60, odds="1.80")   # edge +8%
+
+        self.assertEqual(publish_daily()["total"], 1)
+
+    @override_settings(PUBLISH_ON_EDGE=False)
+    def test_it_can_be_turned_off(self):
+        """A short-priced favourite still publishes under confidence ranking."""
+        make_prediction(self._fixture(), confidence=80, odds="1.15")
+
+        self.assertEqual(publish_daily()["total"], 1)
+
+    def test_the_confidence_gate_still_applies(self):
+        """Edge is about money; confidence is about whether to speak at all."""
+        make_prediction(self._fixture(), confidence=40, odds="3.00")   # edge +20%
+
+        self.assertEqual(publish_daily()["total"], 0)

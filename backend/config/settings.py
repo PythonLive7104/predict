@@ -286,6 +286,17 @@ MIN_PUBLISH_CONFIDENCE = env("MIN_PUBLISH_CONFIDENCE")
 CALIBRATION_SLOPE = env.float("CALIBRATION_SLOPE", default=0.808)
 CALIBRATION_INTERCEPT = env.float("CALIBRATION_INTERCEPT", default=0.0411)
 
+# Publish on value rather than likelihood. `edge` is market_odds x probability
+# minus one: positive means the book pays more than the calibrated model's fair
+# price. Ranking on confidence instead hands the slate to double chance, which
+# wins three times in four and still loses money at 1.15.
+#
+# Set PUBLISH_ON_EDGE=False to fall back to confidence ranking. MIN_EDGE is the
+# margin required — 0.0 is break-even, 0.03 asks the book to be 3% wrong, which
+# is a real but demanding bar.
+PUBLISH_ON_EDGE = env.bool("PUBLISH_ON_EDGE", default=True)
+MIN_EDGE = env.float("MIN_EDGE", default=0.0)
+
 # --- Telegram -------------------------------------------------------------
 
 TELEGRAM_BOT_TOKEN = env("TELEGRAM_BOT_TOKEN", default="")

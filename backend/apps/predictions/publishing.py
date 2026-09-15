@@ -31,15 +31,32 @@ SAFE_MARKETS = [Market.DOUBLE_CHANCE, Market.MATCH_RESULT, Market.OVER_UNDER_25]
 
 
 def _publishable_for(on: date):
-    return (
-        Prediction.objects.filter(
-            fixture__kickoff__date=on,
-            published_at__isnull=True,
-            confidence__gte=settings.MIN_PUBLISH_CONFIDENCE,
-        )
-        .select_related("fixture__home", "fixture__away", "fixture__league")
-        .order_by("-confidence")
-    )
+    """
+    What may ship today, best first.
+
+    Two gates, and they answer different questions. `MIN_PUBLISH_CONFIDENCE`
+    asks "is the model sure enough to say anything?" — `MIN_EDGE` asks "is the
+    book paying more than this is worth?" Only the second one is about money.
+
+    Ranking on confidence hands the free slate to double chance every time: it
+    combines two outcomes out of three, so it is always the most confident pick
+    on the board, and at 1.10-1.30 it breaks even only above 1.33. Three seasons
+    of backtest say it wins 75% and loses about 10p in the pound. Ranking on
+    edge picks what is mispriced instead of what is likely.
+    """
+    qs = Prediction.objects.filter(
+        fixture__kickoff__date=on,
+        published_at__isnull=True,
+        confidence__gte=settings.MIN_PUBLISH_CONFIDENCE,
+    ).select_related("fixture__home", "fixture__away", "fixture__league")
+
+    if not settings.PUBLISH_ON_EDGE:
+        return qs.order_by("-confidence")
+
+    # An unpriced pick cannot be assessed for value at all, so it is excluded
+    # rather than waved through on confidence — publishing something we cannot
+    # justify is the habit this change exists to break.
+    return qs.filter(edge__gte=settings.MIN_EDGE).order_by("-edge", "-confidence")
 
 
 @transaction.atomic
@@ -53,6 +70,21 @@ def publish_daily(on: date | None = None, free_count: int = FREE_PICKS_PER_DAY) 
     """
     on = on or timezone.now().date()
     candidates = list(_publishable_for(on))
+
+    if settings.PUBLISH_ON_EDGE:
+        # Without this an empty slate is indistinguishable from a broken sync.
+        confident = Prediction.objects.filter(
+            fixture__kickoff__date=on,
+            published_at__isnull=True,
+            confidence__gte=settings.MIN_PUBLISH_CONFIDENCE,
+        )
+        total = confident.count()
+        unpriced = confident.filter(edge__isnull=True).count()
+        logger.info(
+            "edge gate: %s of %s confident picks clear %+.1f%% edge "
+            "(%s had no price)",
+            len(candidates), total, settings.MIN_EDGE * 100, unpriced,
+        )
 
     free_published, seen_fixtures, seen_markets = 0, set(), set()
     for prediction in candidates:

@@ -141,7 +141,22 @@ Neither reads a `Prediction`, so ratings can never learn from our own picks.
 ## Publishing
 
 Generation prices every fixture; `apps/predictions/publishing.py` decides what
-ships. The **best** picks go free, deliberately — the free tier is the shop window
+ships. Two gates, answering different questions: `MIN_PUBLISH_CONFIDENCE` asks
+"is the model sure enough to say anything?", `MIN_EDGE` asks "is the book paying
+more than this is worth?" Only the second is about money.
+
+**Publishing ranks on edge, not confidence** (`PUBLISH_ON_EDGE`, default on).
+Ranking on confidence hands the free slate to double chance every time — it
+combines two outcomes out of three, so it is always the most confident pick on
+the board — and three seasons of backtest say it wins 75% and loses about 10p in
+the pound at 1.10-1.30. An unpriced pick is excluded rather than waved through:
+value cannot be assessed without a price.
+
+Expect this to cut volume hard. Post-calibration a double-chance pick needs
+better than 1.42 to show value and typically trades at 1.10-1.30, so most of
+them now fail. That is the gate working, not a fault — and if almost nothing
+survives, the honest reading is that the model cannot beat the market's margin,
+which is worth knowing before selling picks. The **best** picks go free, deliberately — the free tier is the shop window
 *and* what the public record is judged on. One free pick per fixture, so the slate
 shows breadth rather than four angles on one match.
 
