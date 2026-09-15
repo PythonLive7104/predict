@@ -58,7 +58,12 @@ class Command(BaseCommand):
         )
         Fixture.objects.update(elo_applied=False)
 
-        tally = defaultdict(lambda: {"n": 0, "won": 0})
+        # `staked`/`returned` are only accumulated for picks that had a real
+        # historical price. Strike rate decides nothing on its own: Double Chance
+        # wins three times in four and still loses money at 1.15, because it
+        # breaks even at 1.33.
+        tally = defaultdict(lambda: {"n": 0, "won": 0, "priced": 0,
+                                     "staked": 0.0, "returned": 0.0})
         scored = 0
 
         for index, fixture in enumerate(fixtures):
@@ -80,6 +85,13 @@ class Command(BaseCommand):
                         row["n"] += 1
                         row["won"] += outcome == Outcome.WON
                         scored += 1
+
+                        price = self._best_price(prediction)
+                        if price:
+                            row["priced"] += 1
+                            row["staked"] += 1.0
+                            if outcome == Outcome.WON:
+                                row["returned"] += price
 
             # Only now may this result inform the ratings.
             ratings.apply_elo(fixture)
@@ -114,6 +126,27 @@ class Command(BaseCommand):
             out.append(prediction)
         return out
 
+    @staticmethod
+    def _best_price(prediction) -> float | None:
+        """
+        Best available historical price for this selection.
+
+        Named apart from `_price`, which prices a *fixture* into predictions —
+        one is the model's job, the other the bookmaker's.
+
+        Best rather than average: a bettor shops for the best line, and grading
+        against a worse one understates a real strategy. Returns None when the
+        fixture has no stored odds — those picks are counted in the strike rate
+        but excluded from ROI, because a guessed price would make the headline
+        number fiction.
+        """
+        prices = [
+            float(o.price)
+            for o in prediction.fixture.odds.all()
+            if o.market == prediction.market and o.selection == prediction.selection
+        ]
+        return max(prices) if prices else None
+
     def _report(self, tally, scored, warmup, min_conf):
         labels = dict(Market.choices)
         self.stdout.write("")
@@ -123,28 +156,57 @@ class Command(BaseCommand):
                 f"(warmup {warmup}, min confidence {min_conf}%)"
             )
         )
-        self.stdout.write(f"  {'MARKET':<24}{'PICKS':>7}{'WON':>7}{'RATE':>8}")
+        self.stdout.write(
+            f"  {'MARKET':<24}{'PICKS':>7}{'WON':>7}{'RATE':>8}{'PRICED':>8}{'ROI':>9}"
+        )
 
         total_n = total_won = 0
         for market, row in sorted(tally.items(), key=lambda kv: -kv[1]["n"]):
             rate = row["won"] / row["n"] * 100 if row["n"] else 0
             total_n += row["n"]
             total_won += row["won"]
+            roi = (
+                f"{(row['returned'] - row['staked']) / row['staked'] * 100:>+8.1f}%"
+                if row["staked"] else f"{'—':>9}"
+            )
             self.stdout.write(
-                f"  {labels.get(market, market):<24}{row['n']:>7}{row['won']:>7}{rate:>7.1f}%"
+                f"  {labels.get(market, market):<24}{row['n']:>7}{row['won']:>7}"
+                f"{rate:>7.1f}%{row['priced']:>8}{roi}"
             )
 
+        staked = sum(r["staked"] for r in tally.values())
+        returned = sum(r["returned"] for r in tally.values())
+        priced = sum(r["priced"] for r in tally.values())
         overall = total_won / total_n * 100 if total_n else 0
         self.stdout.write(f"  {'—' * 44}")
-        self.stdout.write(
-            self.style.SUCCESS(f"  {'ALL MARKETS':<24}{total_n:>7}{total_won:>7}{overall:>7.1f}%")
+        overall_roi = (
+            f"{(returned - staked) / staked * 100:>+8.1f}%" if staked else f"{'—':>9}"
         )
+        self.stdout.write(self.style.SUCCESS(
+            f"  {'ALL MARKETS':<24}{total_n:>7}{total_won:>7}{overall:>7.1f}%"
+            f"{priced:>8}{overall_roi}"
+        ))
         self.stdout.write("")
-        self.stdout.write(
-            "  Strike rate alone does not mean profit — a market with a high rate at\n"
-            "  short prices can still lose money. Compare against the book price\n"
-            "  before treating any of this as an edge."
-        )
+        if not staked:
+            self.stdout.write(self.style.WARNING(
+                "  No ROI: none of these fixtures has stored odds, so profitability\n"
+                "  is unmeasured. Strike rate alone decides nothing — a market can\n"
+                "  win three times in four and still lose money at short prices.\n"
+                "  Fetch prices first:  manage.py backfill_odds --sample 20"
+            ))
+        else:
+            covered = priced / total_n * 100 if total_n else 0
+            self.stdout.write(
+                f"  ROI is level stakes at the best available price, over the\n"
+                f"  {covered:.0f}% of picks that have one. A market can win most of\n"
+                f"  the time and still lose money: break-even at 75% is 1.33, and\n"
+                f"  double chance rarely pays that."
+            )
+            if covered < 50:
+                self.stdout.write(self.style.WARNING(
+                    f"\n  Only {covered:.0f}% of picks are priced, so this ROI describes\n"
+                    "  that subset rather than the strategy as a whole."
+                ))
 
         # A result this good almost always means the fixtures were simulated from
         # the same Poisson process the model assumes, so it is scoring itself

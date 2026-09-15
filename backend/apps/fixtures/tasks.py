@@ -219,12 +219,17 @@ def sync_odds_for_upcoming(hours_ahead: int = 48) -> dict:
 
 
 @shared_task
-def sync_odds_and_injuries(fixture_id: int) -> None:
-    """Called per fixture shortly before prediction time, when lineups firm up."""
-    client = ApiFootballClient()
-    fixture = Fixture.objects.get(pk=fixture_id)
+def store_odds(fixture: Fixture, nodes: list) -> int:
+    """
+    Persist an /odds payload against a fixture. Returns rows written.
 
-    for node in client.odds(fixture.api_id):
+    Shared by the live sync and the historical backfill so both keep exactly the
+    same view of which markets exist — `_map_market` drops everything except
+    1X2, the 2.5 over/under line, BTTS and double chance, and a second copy of
+    that filter would eventually disagree with this one.
+    """
+    written = 0
+    for node in nodes:
         for book in node.get("bookmakers", []):
             for bet in book.get("bets", []):
                 market = _map_market(bet.get("name", ""))
@@ -241,6 +246,16 @@ def sync_odds_and_injuries(fixture_id: int) -> None:
                         selection=selection,
                         defaults={"price": value["odd"]},
                     )
+                    written += 1
+    return written
+
+
+def sync_odds_and_injuries(fixture_id: int) -> None:
+    """Called per fixture shortly before prediction time, when lineups firm up."""
+    client = ApiFootballClient()
+    fixture = Fixture.objects.get(pk=fixture_id)
+
+    store_odds(fixture, client.odds(fixture.api_id))
 
     fixture.injuries.all().delete()
     for node in client.injuries(fixture.api_id):

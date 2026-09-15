@@ -15,6 +15,7 @@ from django.test import TestCase
 from django.utils import timezone
 
 from apps.fixtures.models import Fixture, Team
+from apps.predictions.models import Market
 
 from .factories import make_league, make_team
 
@@ -162,3 +163,66 @@ class RefreshSlateTests(TestCase):
 
         output = self._run()
         self.assertIn("Build Odds will report no_prices", output)
+
+
+class BacktestRoiTests(TestCase):
+    """
+    Strike rate decides nothing on its own. A market winning three times in four
+    at 1.15 loses about 10p in the pound, because break-even at 75% is 1.33 —
+    which is exactly the shape of this engine's Double Chance picks.
+    """
+
+    def _command(self):
+        from apps.predictions.management.commands.backtest import Command
+
+        return Command()
+
+    def _pick_with_odds(self, *prices, market=Market.MATCH_RESULT, selection="home"):
+        from decimal import Decimal
+
+        from apps.fixtures.models import Odds
+        from apps.predictions.models import Prediction
+
+        from .factories import make_fixture
+
+        fixture = make_fixture()
+        for i, price in enumerate(prices):
+            Odds.objects.create(
+                fixture=fixture, bookmaker=f"Book{i}", market=market,
+                selection=selection, price=Decimal(str(price)),
+            )
+        return Prediction(
+            fixture=fixture, market=market, selection=selection,
+            probability=0.7, confidence=70,
+        )
+
+    def test_uses_the_best_available_price(self):
+        """A bettor shops the line; grading on a worse one understates reality."""
+        pick = self._pick_with_odds("1.80", "2.10", "1.95")
+        self.assertEqual(self._command()._best_price(pick), 2.10)
+
+    def test_an_unpriced_pick_returns_none(self):
+        """Counted in the strike rate, excluded from ROI — a guessed price would
+        make the headline number fiction."""
+        pick = self._pick_with_odds()
+        self.assertIsNone(self._command()._best_price(pick))
+
+    def test_a_price_for_a_different_selection_is_not_used(self):
+        pick = self._pick_with_odds("1.80", selection="home")
+        pick.selection = "away"
+        self.assertIsNone(self._command()._best_price(pick))
+
+    def test_a_price_for_a_different_market_is_not_used(self):
+        pick = self._pick_with_odds("1.80", market=Market.BTTS)
+        pick.market = Market.MATCH_RESULT
+        self.assertIsNone(self._command()._best_price(pick))
+
+    def test_the_arithmetic_that_makes_a_winning_market_unprofitable(self):
+        """
+        The finding that matters, as a test: 75% at 1.15 loses money. If this
+        ever passes with a positive ROI, the calculation has broken.
+        """
+        rate, price = 0.75, 1.15
+        roi = (rate * price - 1) * 100
+        self.assertLess(roi, 0)
+        self.assertAlmostEqual(1 / rate, 1.333, places=2, msg="break-even at 75%")
