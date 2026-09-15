@@ -277,3 +277,55 @@ class CalibrationTests(TestCase):
     def test_the_gap_is_actual_minus_claimed(self):
         report = self._report({70: self._band(100, 60, 70.0)})
         self.assertIn("-10.0%", report)
+
+
+class ImplausibilityWarningTests(TestCase):
+    """
+    The warning exists to catch a model graded against simulated data. Checking
+    the blended average misfires: double chance combines two outcomes out of
+    three and clears 70% by construction, so a mix heavy in it pushes the overall
+    figure past any threshold without anything being wrong.
+    """
+
+    def _report(self, tally, scored):
+        from io import StringIO
+
+        from apps.predictions.management.commands.backtest import Command
+
+        cmd = Command()
+        cmd.stdout = StringIO()
+        cmd._report(tally, scored, warmup=200, min_conf=55)
+        return cmd.stdout.getvalue()
+
+    @staticmethod
+    def _row(n, won):
+        return {"n": n, "won": won, "priced": 0, "staked": 0.0, "returned": 0.0}
+
+    def test_a_high_average_driven_by_double_chance_is_explained_not_alarmed(self):
+        """The live run: 65.2% overall, 60.7% on match results. Not a red flag."""
+        tally = {
+            Market.DOUBLE_CHANCE: self._row(7463, 5596),   # 75%
+            Market.MATCH_RESULT: self._row(2007, 1219),    # 60.7%
+        }
+        report = self._report(tally, 9470)
+
+        self.assertIn("flattered by the market mix", report)
+        self.assertNotIn("implausibly high", report)
+
+    def test_an_implausible_match_result_rate_is_flagged(self):
+        """70% on 1X2 is not a good model, it is a broken measurement."""
+        tally = {Market.MATCH_RESULT: self._row(2000, 1400)}   # 70%
+        report = self._report(tally, 2000)
+
+        self.assertIn("implausibly high", report)
+        self.assertIn("match results", report)
+
+    def test_a_credible_run_says_nothing(self):
+        tally = {
+            Market.MATCH_RESULT: self._row(2000, 1140),     # 57%
+            Market.OVER_UNDER_25: self._row(2000, 1120),    # 56%
+        }
+        report = self._report(tally, 4000)
+
+        self.assertNotIn("implausibly high", report)
+        self.assertNotIn("flattered", report)
