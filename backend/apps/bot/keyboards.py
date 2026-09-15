@@ -80,17 +80,21 @@ def notifications_keyboard(enabled: bool) -> InlineKeyboardMarkup:
     )
 
 
-def unlock_keyboard(prediction_id: int, credits: int = 1) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text=f"🔓 Unlock ({credits} credit)", callback_data=f"unlock:{prediction_id}"
-                )
-            ],
-            [InlineKeyboardButton(text="💳 Go unlimited", callback_data="menu:purchase")],
-        ]
+def unlock_keyboard(prediction_id: int, credits: int = 1, vip: bool = False) -> InlineKeyboardMarkup:
+    """
+    A credit unlocks any single pick, VIP included — credits are the à la carte
+    route and a plan is the unlimited one. On a VIP pick the subscribe button
+    leads, because that is the offer the pick is there to make.
+    """
+    unlock = InlineKeyboardButton(
+        text=f"🔓 Unlock ({credits} credit)", callback_data=f"unlock:{prediction_id}"
     )
+    subscribe = InlineKeyboardButton(
+        text="💳 Subscribe for unlimited" if vip else "💳 Go unlimited",
+        callback_data="menu:purchase",
+    )
+    rows = [[subscribe], [unlock]] if vip else [[unlock], [subscribe]]
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def review_keyboard(payment_id: int) -> InlineKeyboardMarkup:

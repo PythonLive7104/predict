@@ -49,10 +49,17 @@ def todays_free_picks(limit: int = 5) -> list[Prediction]:
 
 @sync_to_async
 def picks_for_span(span: str, limit: int = 12) -> tuple[list, str]:
-    """Free picks across a named span, plus the label to head the list with."""
+    """
+    Every published pick across a span — both tiers — plus the heading label.
+
+    VIP picks are shown rather than filtered out. Hiding them entirely means a
+    free user never learns what a subscription buys; showing them locked is the
+    upsell. Both tiers are locked either way, so nothing is given away by
+    listing them.
+    """
     start, end, label = access.span_dates(span)
     rows = list(
-        access.published_picks(on=start, until=end, tier=Tier.FREE)
+        access.published_picks(on=start, until=end)
         .order_by("fixture__kickoff", "-confidence")[:limit]
     )
     return rows, label

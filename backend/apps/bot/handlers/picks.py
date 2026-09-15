@@ -5,6 +5,7 @@ from aiogram.types import CallbackQuery, Message
 
 from apps.bot import keyboards as kb
 from apps.bot import services
+from apps.predictions.models import Tier
 
 router = Router(name="picks")
 
@@ -20,12 +21,16 @@ def _teaser(prediction) -> str:
     owner's decision; if conversion drops, this is the first thing to revisit.
     """
     fx = prediction.fixture
+    # The tier is the one thing a locked card may say about itself: it is the
+    # difference between "spend a credit" and "this is what a plan buys", and it
+    # reveals nothing about the pick.
+    badge = "⭐ VIP" if prediction.tier == Tier.VIP else "Free pick"
     # The day is shown as well as the time: a weekend list spans three dates and
     # "15:00" alone would leave the reader guessing which one.
     return (
         f"<b>{fx.home.name} vs {fx.away.name}</b>\n"
         f"{fx.league.name} · {fx.kickoff:%a %d %b, %H:%M UTC}\n"
-        f"🔒 Analysis locked"
+        f"{badge} · 🔒 Analysis locked"
     )
 
 
@@ -70,12 +75,19 @@ async def _send_span(message: Message, span: str) -> None:
 
     # One header carrying the day switcher, then the picks. Repeating the
     # switcher under every pick would bury the list in buttons.
+    vip_count = sum(1 for p in picks if p.tier == Tier.VIP)
+    mix = f" · {vip_count} VIP" if vip_count else ""
     await message.answer(
-        f"<b>{label}</b> — {len(picks)} pick{'s' if len(picks) != 1 else ''}",
+        f"<b>{label}</b> — {len(picks)} pick{'s' if len(picks) != 1 else ''}{mix}",
         reply_markup=kb.span_keyboard(span),
     )
     for prediction in picks:
-        await message.answer(_teaser(prediction), reply_markup=kb.unlock_keyboard(prediction.pk))
+        await message.answer(
+            _teaser(prediction),
+            reply_markup=kb.unlock_keyboard(
+                prediction.pk, vip=prediction.tier == Tier.VIP
+            ),
+        )
 
 
 @router.message(F.text == kb.BTN_VIP)

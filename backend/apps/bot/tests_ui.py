@@ -77,10 +77,37 @@ class PicksForSpanTests(TestCase):
         rows, _ = async_to_sync(services.picks_for_span)("today")
         self.assertEqual(rows, [])
 
-    def test_vip_picks_are_not_in_the_free_list(self):
-        self._pick(0, tier=Tier.VIP)
+    def test_vip_picks_are_listed_too(self):
+        """
+        Shown rather than hidden. Both tiers are locked either way, so listing a
+        VIP pick gives nothing away — and hiding it means a free user never
+        learns what a subscription buys.
+        """
+        vip = self._pick(0, tier=Tier.VIP)
+        free = self._pick(0, tier=Tier.FREE)
+
         rows, _ = async_to_sync(services.picks_for_span)("today")
-        self.assertEqual(rows, [])
+
+        self.assertCountEqual([r.pk for r in rows], [vip.pk, free.pk])
+
+    def test_a_vip_teaser_says_so_and_still_reveals_nothing(self):
+        from apps.bot.handlers.picks import _teaser
+
+        text = _teaser(self._pick(0, tier=Tier.VIP))
+
+        self.assertIn("VIP", text)
+        self.assertIn("locked", text.lower())
+        self.assertNotIn("70", text)          # confidence
+        self.assertNotIn("Match Result", text)
+
+    def test_a_vip_pick_leads_with_subscribe(self):
+        """Credits still work on a VIP pick; the plan is the offer it exists to make."""
+        rows = [r.text for row in kb.unlock_keyboard(1, vip=True).inline_keyboard for r in row]
+        self.assertIn("💳 Subscribe for unlimited", rows[0])
+        self.assertTrue(any("Unlock" in r for r in rows))
+
+        free_rows = [r.text for row in kb.unlock_keyboard(1).inline_keyboard for r in row]
+        self.assertIn("Unlock", free_rows[0])
 
     def test_an_empty_window_returns_cleanly(self):
         rows, label = async_to_sync(services.picks_for_span)("weekend")
