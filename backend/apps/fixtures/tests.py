@@ -325,3 +325,76 @@ class OddsSyncTests(TestCase):
         result = sync_odds_for_upcoming()
         self.assertEqual(result, {"fixtures": 0, "synced": 0, "failed": 0, "requests": 0})
         per_fixture.assert_not_called()
+
+
+class FindLeaguesTests(TestCase):
+    """
+    Turning fifty league names into ids. The matching has to be forgiving —
+    providers write "Liga Profesional Argentina" one season and "Primera
+    División" the next — without being so loose it silently returns the wrong
+    country's league.
+    """
+
+    NODES = [
+        {"league": {"id": 39, "name": "Premier League", "type": "League"},
+         "country": {"name": "England"}},
+        {"league": {"id": 235, "name": "Premier League", "type": "League"},
+         "country": {"name": "Russia"}},
+        {"league": {"id": 71, "name": "Serie A", "type": "League"},
+         "country": {"name": "Brazil"}},
+        {"league": {"id": 135, "name": "Serie A", "type": "League"},
+         "country": {"name": "Italy"}},
+        {"league": {"id": 128, "name": "Liga Profesional Argentina", "type": "League"},
+         "country": {"name": "Argentina"}},
+        {"league": {"id": 2, "name": "UEFA Champions League", "type": "Cup"},
+         "country": {"name": "World"}},
+    ]
+
+    def _run(self, *args):
+        out = StringIO()
+        with patch(
+            "apps.fixtures.management.commands.find_leagues.ApiFootballClient"
+        ) as client_cls:
+            client_cls.return_value.leagues.return_value = self.NODES
+            call_command("find_leagues", *args, stdout=out)
+        return out.getvalue()
+
+    def test_country_disambiguates_leagues_sharing_a_name(self):
+        """Two Premier Leagues and two Serie As — the name alone is not enough."""
+        output = self._run("--top50")
+
+        self.assertIn("39", output)     # England
+        self.assertIn("235", output)    # Russia
+        self.assertIn("71", output)     # Brazil
+        self.assertIn("135", output)    # Italy
+
+    def test_emits_a_pasteable_env_line(self):
+        output = self._run("--top50")
+        self.assertIn("API_FOOTBALL_LEAGUES=", output)
+
+    def test_unmatched_leagues_are_named_not_dropped(self):
+        """
+        A league the plan cannot see, or one named differently, must be visible —
+        silently returning 6 of 50 ids would look like success.
+        """
+        output = self._run("--top50")
+        self.assertIn("Not matched", output)
+
+    def test_cups_are_excluded_by_default(self):
+        """A cup has no league table and far thinner rating history."""
+        output = self._run("Champions League")
+        self.assertNotIn("UEFA Champions League", output)
+
+    def test_cups_can_be_asked_for_explicitly(self):
+        output = self._run("--type", "Cup", "Champions League")
+        self.assertIn("UEFA Champions League", output)
+
+    def test_request_cost_is_reported(self):
+        """Breadth is free in code and not free in requests or tokens."""
+        output = self._run("--top50")
+        self.assertIn("What this costs per day", output)
+        self.assertIn("7,500 on PRO", output)
+
+    def test_refuses_with_no_input(self):
+        with self.assertRaises(CommandError):
+            call_command("find_leagues", stdout=StringIO())

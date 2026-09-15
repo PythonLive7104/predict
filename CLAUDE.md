@@ -283,6 +283,12 @@ backtest over real API-Football history is evidence of anything.**
   exhausted daily quota arrives this way too, so overspending does not look like
   overspending — it reads as a parameter bug. `sync_fixtures` logs its request
   count for exactly this reason.
+- **`manage.py find_leagues --top50`** resolves league names to api-ids in one
+  request and prints a pasteable `API_FOOTBALL_LEAGUES=` line plus the request
+  and token cost. Matching is fuzzy within a country but never across one:
+  England and Russia both have a "Premier League", Italy and Brazil both a
+  "Serie A", so the country is what disambiguates. Cups are excluded by default
+  — they have no league table and far thinner rating history.
 - **Request volume is `leagues x (days_ahead + 1) x runs-per-day`**, and the free
   plan allows 100/day. `API_FOOTBALL_LEAGUES` narrows the active leagues
   (`fixtures.tasks.leagues_to_sync`) and is the cheapest lever — one league
