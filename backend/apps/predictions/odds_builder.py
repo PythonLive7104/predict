@@ -78,6 +78,7 @@ def candidate_legs(
     end: date | None = None,
     min_confidence: int = 60,
     max_fixtures: int = MAX_FIXTURES,
+    league_id: int | None = None,
 ) -> list[Prediction]:
     """
     Priced, published, safe-market picks across a date range.
@@ -100,6 +101,7 @@ def candidate_legs(
             confidence__gte=min_confidence,
             market_odds__isnull=False,
             market__in=SAFE_MARKETS,
+            **({"fixture__league__api_id": league_id} if league_id else {}),
         )
         .select_related("fixture__home", "fixture__away", "fixture__league")
         .order_by("-confidence")
@@ -126,6 +128,7 @@ def build_for_target(
     min_odds: float = 3.0,
     max_odds: float = 5.0,
     min_confidence: int = 60,
+    league_id: int | None = None,
 ) -> OddsResult:
     """
     The combination landing inside [min_odds, max_odds] with the best chance of
@@ -137,7 +140,7 @@ def build_for_target(
     if min_odds <= 1 or max_odds < min_odds:
         raise ValueError(f"nonsensical odds range: {min_odds}-{max_odds}")
 
-    pool = candidate_legs(start, end, min_confidence)
+    pool = candidate_legs(start, end, min_confidence, league_id=league_id)
     fixtures = len({leg.fixture_id for leg in pool})
 
     if not pool:

@@ -52,34 +52,76 @@ def _full(prediction) -> str:
 @router.message(F.text == kb.BTN_TODAY)
 async def todays_picks(message: Message) -> None:
     await services.get_or_create_user(message.from_user)
-    await _send_span(message, "today")
+    await _send_menu(message, "today", 0)
 
 
+@router.callback_query(F.data.startswith("pk:"))
+async def route(callback: CallbackQuery) -> None:
+    """
+    pk:<span>:<menu|all|league_id>:<page>
+
+    One callback prefix for the whole surface: choosing a day, paging the league
+    list and opening a league all land here, so the span travels with every tap
+    and a user who switches day keeps the league they were looking at.
+    """
+    await services.get_or_create_user(callback.from_user)
+    _, span, what, page = callback.data.split(":", 3)
+    await callback.answer()
+
+    if what == "menu":
+        await _send_menu(callback.message, span, int(page))
+    elif what == "all":
+        await _send_picks(callback.message, span, None)
+    else:
+        await _send_picks(callback.message, span, int(what))
+
+
+# Kept so older messages still work: Telegram leaves buttons live on messages
+# that have already been sent, and a stale tap should not silently do nothing.
 @router.callback_query(F.data.startswith("picks:"))
-async def switch_span(callback: CallbackQuery) -> None:
+async def legacy_span(callback: CallbackQuery) -> None:
     await services.get_or_create_user(callback.from_user)
     await callback.answer()
-    await _send_span(callback.message, callback.data.split(":", 1)[1])
+    await _send_menu(callback.message, callback.data.split(":", 1)[1], 0)
 
 
-async def _send_span(message: Message, span: str) -> None:
-    picks, label = await services.picks_for_span(span)
+async def _send_menu(message: Message, span: str, page: int) -> None:
+    leagues, label = await services.leagues_for_span(span)
 
-    if not picks:
+    if not leagues:
         await message.answer(
             f"<b>{label}</b>\n\nNothing published for this window yet. Picks are "
             "generated a few hours before the first kickoff, once team news lands.",
-            reply_markup=kb.span_keyboard(span),
+            reply_markup=kb.league_menu([], span, 0),
         )
         return
 
-    # One header carrying the day switcher, then the picks. Repeating the
-    # switcher under every pick would bury the list in buttons.
+    total = sum(item["picks"] for item in leagues)
+    await message.answer(
+        f"<b>{label}</b> — {total} pick{'s' if total != 1 else ''} across "
+        f"{len(leagues)} league{'s' if len(leagues) != 1 else ''}.\n\n"
+        "Choose a league, or take the lot:",
+        reply_markup=kb.league_menu(leagues, span, page),
+    )
+
+
+async def _send_picks(message: Message, span: str, league_id: int | None) -> None:
+    picks, label = await services.picks_for_span(span, league_id=league_id)
+
+    if not picks:
+        await message.answer(
+            f"<b>{label}</b>\n\nNothing published here yet.",
+            reply_markup=kb.back_to_leagues(span),
+        )
+        return
+
+    where = picks[0].fixture.league.name if league_id else "all leagues"
     vip_count = sum(1 for p in picks if p.tier == Tier.VIP)
     mix = f" · {vip_count} VIP" if vip_count else ""
     await message.answer(
-        f"<b>{label}</b> — {len(picks)} pick{'s' if len(picks) != 1 else ''}{mix}",
-        reply_markup=kb.span_keyboard(span),
+        f"<b>{label} · {where}</b> — {len(picks)} pick"
+        f"{'s' if len(picks) != 1 else ''}{mix}",
+        reply_markup=kb.back_to_leagues(span),
     )
     for prediction in picks:
         await message.answer(

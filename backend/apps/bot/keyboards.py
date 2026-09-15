@@ -140,3 +140,60 @@ def odds_keyboard(active_span: str = "today", active_target: str = "") -> Inline
     ]
     # Two rows of two keeps the target buttons legible on a narrow phone.
     return InlineKeyboardMarkup(inline_keyboard=[targets[:2], targets[2:], days])
+
+
+# Eight fits a phone screen without scrolling the keyboard itself. With fifty
+# leagues configured, a flat list would be unusable.
+LEAGUES_PER_PAGE = 8
+
+
+def league_menu(leagues: list, span: str, page: int = 0) -> InlineKeyboardMarkup:
+    """
+    Pick a league, or take the lot.
+
+    Counts are shown so nobody taps into an empty league — the list only
+    contains leagues that have picks, and the number says how many.
+    """
+    start = page * LEAGUES_PER_PAGE
+    window = leagues[start:start + LEAGUES_PER_PAGE]
+    total = sum(item["picks"] for item in leagues)
+
+    rows = [[InlineKeyboardButton(
+        text=f"All leagues ({total})", callback_data=f"pk:{span}:all:0"
+    )]]
+    rows += [
+        [InlineKeyboardButton(
+            text=f"{item['name']} ({item['picks']})"[:60],
+            callback_data=f"pk:{span}:{item['api_id']}:0",
+        )]
+        for item in window
+    ]
+
+    pager = []
+    if page > 0:
+        pager.append(InlineKeyboardButton(
+            text="‹ Back", callback_data=f"pk:{span}:menu:{page - 1}"
+        ))
+    if start + LEAGUES_PER_PAGE < len(leagues):
+        pager.append(InlineKeyboardButton(
+            text="More ›", callback_data=f"pk:{span}:menu:{page + 1}"
+        ))
+    if pager:
+        rows.append(pager)
+
+    # The day switcher stays on the menu so a user can change window before
+    # committing to a league rather than backing out afterwards.
+    rows.append([
+        InlineKeyboardButton(
+            text=f"· {label} ·" if key == span else label,
+            callback_data=f"pk:{key}:menu:0",
+        )
+        for key, label in SPANS
+    ])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def back_to_leagues(span: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="‹ All leagues", callback_data=f"pk:{span}:menu:0")
+    ]])

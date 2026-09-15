@@ -203,3 +203,86 @@ class TeaserTests(TestCase):
         self.assertIn("Man City or Draw", text)
         self.assertIn("Double Chance", text)
         self.assertIn("86", text)
+
+
+class LeagueFilterTests(TestCase):
+    """
+    With fifty leagues configured, one flat list is unusable. Only leagues that
+    actually have picks are offered — fifty entries where forty-six say "nothing
+    published" is worse than four that work.
+    """
+
+    def setUp(self):
+        self.epl = make_league(name="Premier League")
+        self.liga = make_league(name="La Liga")
+        self.n = 0
+
+    def _pick(self, league, tier=Tier.FREE):
+        self.n += 1
+        fixture = make_fixture(
+            league=league,
+            home=make_team(f"H{self.n}"), away=make_team(f"A{self.n}"),
+            kickoff=timezone.now().replace(hour=12, minute=0, second=0, microsecond=0)
+                    + timedelta(minutes=self.n),
+        )
+        return Prediction.objects.create(
+            fixture=fixture, market=Market.MATCH_RESULT, selection="home",
+            probability=0.7, confidence=70, tier=tier, published_at=timezone.now(),
+        )
+
+    def test_only_leagues_with_picks_are_offered(self):
+        self._pick(self.epl)
+        self._pick(self.epl)
+        make_league(name="Serie A")   # configured, nothing published
+
+        leagues, _ = async_to_sync(services.leagues_for_span)("today")
+
+        self.assertEqual([item["name"] for item in leagues], ["Premier League"])
+        self.assertEqual(leagues[0]["picks"], 2)
+
+    def test_leagues_are_ordered_by_how_much_they_have(self):
+        for _ in range(3):
+            self._pick(self.epl)
+        self._pick(self.liga)
+
+        leagues, _ = async_to_sync(services.leagues_for_span)("today")
+
+        self.assertEqual([item["name"] for item in leagues], ["Premier League", "La Liga"])
+
+    def test_filtering_returns_only_that_league(self):
+        wanted = self._pick(self.epl)
+        self._pick(self.liga)
+
+        rows, _ = async_to_sync(services.picks_for_span)("today", league_id=self.epl.api_id)
+
+        self.assertEqual([r.pk for r in rows], [wanted.pk])
+
+    def test_no_filter_returns_everything(self):
+        self._pick(self.epl)
+        self._pick(self.liga)
+
+        rows, _ = async_to_sync(services.picks_for_span)("today")
+        self.assertEqual(len(rows), 2)
+
+    def test_the_menu_pages_rather_than_listing_fifty(self):
+        leagues = [
+            {"api_id": i, "name": f"League {i}", "country": "X", "picks": 1}
+            for i in range(20)
+        ]
+        first = kb.league_menu(leagues, "today", 0)
+        texts = [b.text for row in first.inline_keyboard for b in row]
+
+        self.assertIn("All leagues (20)", texts[0])
+        self.assertTrue(any("More" in t for t in texts))
+        self.assertFalse(any("Back" in t for t in texts), "no Back on the first page")
+
+        second = kb.league_menu(leagues, "today", 1)
+        second_texts = [b.text for row in second.inline_keyboard for b in row]
+        self.assertTrue(any("Back" in t for t in second_texts))
+
+    def test_the_day_switcher_stays_on_the_menu(self):
+        """So a user can change window before committing to a league."""
+        menu = kb.league_menu([{"api_id": 1, "name": "X", "country": "Y", "picks": 1}],
+                              "today", 0)
+        texts = [b.text for row in menu.inline_keyboard for b in row]
+        self.assertTrue(any("Tomorrow" in t for t in texts))

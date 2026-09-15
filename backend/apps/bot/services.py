@@ -48,7 +48,14 @@ def todays_free_picks(limit: int = 5) -> list[Prediction]:
 
 
 @sync_to_async
-def picks_for_span(span: str, limit: int = 12) -> tuple[list, str]:
+def leagues_for_span(span: str) -> tuple[list, str]:
+    """Leagues with published picks in this window, most picks first."""
+    start, end, label = access.span_dates(span)
+    return access.leagues_with_picks(start, end), label
+
+
+@sync_to_async
+def picks_for_span(span: str, limit: int = 12, league_id: int | None = None) -> tuple[list, str]:
     """
     Every published pick across a span — both tiers — plus the heading label.
 
@@ -59,14 +66,14 @@ def picks_for_span(span: str, limit: int = 12) -> tuple[list, str]:
     """
     start, end, label = access.span_dates(span)
     rows = list(
-        access.published_picks(on=start, until=end)
+        access.published_picks(on=start, until=end, league_id=league_id)
         .order_by("fixture__kickoff", "-confidence")[:limit]
     )
     return rows, label
 
 
 @sync_to_async
-def build_odds_slip(target: str, span: str) -> dict | None:
+def build_odds_slip(target: str, span: str, league_id: int | None = None) -> dict | None:
     """
     A slip aiming at a payout band. Flattened to plain data before returning:
     the handler is async and must never touch the ORM.
@@ -80,7 +87,9 @@ def build_odds_slip(target: str, span: str) -> dict | None:
     _key, label, low, high = band
 
     start, end, span_label = access.span_dates(span)
-    result = odds_builder.build_for_target(start, end, min_odds=low, max_odds=high)
+    result = odds_builder.build_for_target(
+        start, end, min_odds=low, max_odds=high, league_id=league_id
+    )
     if not result.found:
         return {
             "found": False,

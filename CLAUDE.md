@@ -131,6 +131,15 @@ ships. The **best** picks go free, deliberately — the free tier is the shop wi
 *and* what the public record is judged on. One free pick per fixture, so the slate
 shows breadth rather than four angles on one match.
 
+**League selection** — `⚽ Today's Picks` opens a league menu before the list,
+paginated at 8 per page, because fifty leagues in one flat list is unusable.
+`access.leagues_with_picks` only returns leagues that actually have something
+published: offering fifty and having forty-six answer "nothing published" is
+worse than offering four that work. The day switcher stays on the menu so a user
+can change window before committing to a league. Callback data is
+`pk:<span>:<menu|all|league_id>:<page>` — one prefix for the whole surface, so
+the span travels with every tap.
+
 **Date spans** — `access.span_dates` resolves "today" / "tomorrow" / "weekend"
 to a date pair. Weekend means Friday–Sunday, and resolves to the *coming*
 weekend Monday–Thursday but the one in progress Friday–Sunday: people ask for

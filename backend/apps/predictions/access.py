@@ -111,7 +111,10 @@ def can_view(user, prediction: Prediction) -> bool:
 
 
 def published_picks(
-    on: date | None = None, tier: str | None = None, until: date | None = None
+    on: date | None = None,
+    tier: str | None = None,
+    until: date | None = None,
+    league_id: int | None = None,
 ):
     """
     Published picks for one day, or a span when `until` is given.
@@ -130,7 +133,39 @@ def published_picks(
         .select_related("fixture__home", "fixture__away", "fixture__league")
         .order_by("fixture__kickoff", "-confidence")
     )
+    if league_id:
+        qs = qs.filter(fixture__league__api_id=league_id)
     return qs.filter(tier=tier) if tier else qs
+
+
+def leagues_with_picks(start: date, end: date | None = None) -> list[dict]:
+    """
+    Leagues that actually have published picks in this window, with counts.
+
+    Only leagues with something to show are listed. Offering fifty and having
+    forty-six of them answer "nothing published" is worse than offering four
+    that do.
+    """
+    rows = (
+        Prediction.objects.filter(
+            published_at__isnull=False,
+            fixture__kickoff__date__gte=start,
+            fixture__kickoff__date__lte=end or start,
+        )
+        .values("fixture__league__api_id", "fixture__league__name",
+                "fixture__league__country")
+        .annotate(picks=Count("id"))
+        .order_by("-picks", "fixture__league__name")
+    )
+    return [
+        {
+            "api_id": r["fixture__league__api_id"],
+            "name": r["fixture__league__name"],
+            "country": r["fixture__league__country"],
+            "picks": r["picks"],
+        }
+        for r in rows
+    ]
 
 
 def span_dates(span: str, today: date | None = None) -> tuple[date, date, str]:
