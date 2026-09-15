@@ -189,6 +189,27 @@ them were invisible from Telegram: the webhook endpoint returns immediately, so
 Telegram treats a broken delivery as a success, never retries, and never
 reports. The bot just stops answering.
 
+## Refreshing the slate by hand
+
+```bash
+docker compose exec web python manage.py refresh_slate
+```
+
+Runs the whole chain in order — leagues, ratings, fixtures, odds, predictions,
+publishing — and prints what each step did. The scheduler does this daily; this
+is for after changing the league list, restoring a database, or a first deploy.
+
+Add `--backfill 3` after adding leagues. Ratings built with no history leave
+every team at the default, and the engine then prices a coin flip with home
+advantage as though it were an 86% pick.
+
+`.env` is read at container start, so edit it *then* restart, or the command
+runs against the old configuration:
+
+```bash
+docker compose up -d --force-recreate web worker
+```
+
 ## Operations
 
 ```bash

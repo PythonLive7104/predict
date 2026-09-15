@@ -8,6 +8,7 @@ better — so both are pinned here.
 
 from datetime import timedelta
 from io import StringIO
+from unittest.mock import patch
 
 from django.core.management import call_command
 from django.test import TestCase
@@ -73,3 +74,91 @@ class BacktestIsolationTests(TestCase):
         # The command resets ratings itself, so whatever was in the table before
         # must not survive into the replay.
         self.assertEqual(from_default, from_dirty)
+
+
+class RefreshSlateTests(TestCase):
+    """
+    The whole chain in one command. Order is the thing being tested: each step
+    feeds the next, and skipping one leaves the rest quietly wrong rather than
+    failing loudly.
+    """
+
+    def _run(self, *args):
+        from io import StringIO
+
+        out = StringIO()
+        call_command("refresh_slate", *args, stdout=out)
+        return out.getvalue()
+
+    @patch("apps.predictions.tasks.publish_and_build_slips")
+    @patch("apps.predictions.tasks.generate_daily_predictions")
+    @patch("apps.fixtures.tasks.sync_odds_for_upcoming")
+    @patch("apps.fixtures.tasks.sync_fixtures")
+    @patch("apps.predictions.tasks.refresh_ratings")
+    @patch("apps.fixtures.tasks.sync_leagues")
+    def test_runs_every_step_in_order(self, leagues, ratings, fixtures, odds, generate, publish):
+        for mock, value in (
+            (leagues, 2), (ratings, {}), (fixtures, 5), (odds, {}), (generate, 7), (publish, {})
+        ):
+            mock.return_value = value
+
+        output = self._run()
+
+        for label in ("Leagues", "Ratings", "Fixtures", "Odds", "Predictions", "Publishing"):
+            self.assertIn(label, output)
+        for mock in (leagues, ratings, fixtures, odds, generate, publish):
+            mock.assert_called_once()
+
+    @patch("apps.predictions.tasks.publish_and_build_slips")
+    @patch("apps.predictions.tasks.generate_daily_predictions")
+    @patch("apps.fixtures.tasks.sync_odds_for_upcoming")
+    @patch("apps.fixtures.tasks.sync_fixtures")
+    @patch("apps.predictions.tasks.refresh_ratings")
+    @patch("apps.fixtures.tasks.sync_leagues")
+    def test_one_failing_step_does_not_stop_the_rest(
+        self, leagues, ratings, fixtures, odds, generate, publish
+    ):
+        """
+        A league with no odds posted yet is normal, and the steps after it still
+        do useful work — so a failure is reported and the chain continues.
+        """
+        odds.side_effect = Exception("no markets yet")
+        for mock, value in ((leagues, 1), (ratings, {}), (fixtures, 3), (generate, 4), (publish, {})):
+            mock.return_value = value
+
+        output = self._run()
+
+        self.assertIn("failed: no markets yet", output)
+        generate.assert_called_once()
+        publish.assert_called_once()
+
+    @patch("apps.predictions.tasks.publish_and_build_slips")
+    @patch("apps.predictions.tasks.generate_daily_predictions")
+    @patch("apps.fixtures.tasks.sync_odds_for_upcoming")
+    @patch("apps.fixtures.tasks.sync_fixtures")
+    @patch("apps.predictions.tasks.refresh_ratings")
+    @patch("apps.fixtures.tasks.sync_leagues")
+    def test_leagues_can_be_skipped(self, leagues, ratings, fixtures, odds, generate, publish):
+        for mock, value in ((ratings, {}), (fixtures, 1), (odds, {}), (generate, 1), (publish, {})):
+            mock.return_value = value
+
+        self._run("--skip-leagues")
+        leagues.assert_not_called()
+
+    @patch("apps.predictions.tasks.publish_and_build_slips")
+    @patch("apps.predictions.tasks.generate_daily_predictions")
+    @patch("apps.fixtures.tasks.sync_odds_for_upcoming")
+    @patch("apps.fixtures.tasks.sync_fixtures")
+    @patch("apps.predictions.tasks.refresh_ratings")
+    @patch("apps.fixtures.tasks.sync_leagues")
+    def test_warns_when_nothing_published_carries_a_price(
+        self, leagues, ratings, fixtures, odds, generate, publish
+    ):
+        """Without this the operator sees green output and a broken Build Odds."""
+        for mock, value in (
+            (leagues, 0), (ratings, {}), (fixtures, 0), (odds, {}), (generate, 0), (publish, {})
+        ):
+            mock.return_value = value
+
+        output = self._run()
+        self.assertIn("Build Odds will report no_prices", output)
