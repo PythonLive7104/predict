@@ -19,8 +19,11 @@ logger = logging.getLogger(__name__)
 
 
 @shared_task
-def generate_daily_predictions(days_ahead: int = 1) -> int:
+def generate_daily_predictions(days_ahead: int | None = None) -> int:
     """Run a few hours before the first kickoff, once lineups and odds have settled."""
+    # Seven days by default: "this weekend" is up to six days out on a Monday,
+    # and pricing only tomorrow leaves that button with nothing behind it.
+    days_ahead = settings.PREDICTION_HORIZON_DAYS if days_ahead is None else days_ahead
     window_end = timezone.now() + timedelta(days=days_ahead)
     fixtures = Fixture.objects.filter(
         status=Fixture.Status.SCHEDULED,
@@ -311,20 +314,47 @@ def refresh_ratings() -> dict:
 
 
 @shared_task
-def publish_and_build_slips(notify: bool = True) -> dict:
+def publish_and_build_slips(notify: bool = True, days_ahead: int | None = None) -> dict:
     """
     The publish step, run after generation. Kept separate from generation so a
     slate can be regenerated (engine bump, late team news) without republishing
     or double-notifying anyone.
+
+    Publishes every day in the horizon, not just today. Publishing only today
+    left the bot's Tomorrow and Fri-Sun views permanently empty: the picks were
+    generated and then sat unpublished until their own morning came round, so a
+    feature built to show them could never have anything to show.
+
+    Notifications are today's only. A push per day for a week is how a bot gets
+    muted, and the later days will be pushed on their own mornings anyway.
     """
-    published = publish_daily()
-    slips = build_slips()
+    days_ahead = settings.PREDICTION_HORIZON_DAYS if days_ahead is None else days_ahead
+    today = timezone.now().date()
+
+    totals = {"free": 0, "vip": 0, "total": 0}
+    all_slips, today_slips, today_free = [], [], 0
+
+    for offset in range(days_ahead + 1):
+        on = today + timedelta(days=offset)
+        published = publish_daily(on)
+        slips = build_slips(on)
+
+        for key in totals:
+            totals[key] += published[key]
+        all_slips += slips
+        if offset == 0:
+            today_free, today_slips = published["free"], slips
 
     queued = []
     if notify:
-        queued = announce(published_free=published["free"], slips=slips)
+        queued = announce(published_free=today_free, slips=today_slips)
 
-    return published | {"slips": [s.title for s in slips], "broadcasts": queued}
+    return totals | {
+        "date": today.isoformat(),
+        "days": days_ahead + 1,
+        "slips": [s.title for s in all_slips],
+        "broadcasts": queued,
+    }
 
 
 def announce(published_free: int, slips: list) -> list[str]:

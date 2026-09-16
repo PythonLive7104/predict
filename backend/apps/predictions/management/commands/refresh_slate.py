@@ -33,8 +33,10 @@ class Command(BaseCommand):
                                  "needed after adding leagues (try 3).")
         parser.add_argument("--skip-leagues", action="store_true",
                             help="Leave the League rows alone.")
-        parser.add_argument("--days", type=int, default=1,
-                            help="How far ahead to price (default 1).")
+        parser.add_argument("--days", type=int, default=None,
+                            help="How far ahead to price. Defaults to "
+                                 "PREDICTION_HORIZON_DAYS (7), which is what "
+                                 "'this weekend' needs from a Monday.")
 
     def handle(self, *args, **options):
         from apps.fixtures.tasks import (
@@ -58,10 +60,15 @@ class Command(BaseCommand):
             )
 
         self._step("Ratings", lambda: str(refresh_ratings()))
-        self._step("Fixtures", lambda: f"{sync_fixtures(days_ahead=options['days'] + 2)} synced")
+        from django.conf import settings
+
+        days = options["days"] or settings.PREDICTION_HORIZON_DAYS
+        # One day past the pricing horizon: a fixture cannot be priced before it
+        # has been synced.
+        self._step("Fixtures", lambda: f"{sync_fixtures(days_ahead=days + 1)} synced")
         self._step("Odds and injuries", lambda: str(sync_odds_for_upcoming()))
-        self._step("Predictions", lambda: f"{generate_daily_predictions(options['days'])} priced")
-        self._step("Publishing", lambda: str(publish_and_build_slips()))
+        self._step("Predictions", lambda: f"{generate_daily_predictions(days)} priced")
+        self._step("Publishing", lambda: str(publish_and_build_slips(days_ahead=days)))
 
         self.stdout.write("")
         self.stdout.write(self.style.SUCCESS(

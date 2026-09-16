@@ -227,6 +227,9 @@ CELERY_BEAT_SCHEDULE = {
     "sync-odds": {
         "task": "apps.fixtures.tasks.sync_odds_for_upcoming",
         "schedule": crontab(hour=8, minute=0),
+        # Matches the pricing horizon. A fixture with no odds cannot clear the
+        # edge gate, so a shorter window here silently empties the later days.
+        "kwargs": {"hours_ahead": 24 * 8},
     },
     "generate-daily-predictions": {
         "task": "apps.predictions.tasks.generate_daily_predictions",
@@ -296,6 +299,11 @@ CALIBRATION_INTERCEPT = env.float("CALIBRATION_INTERCEPT", default=0.0411)
 # is a real but demanding bar.
 PUBLISH_ON_EDGE = env.bool("PUBLISH_ON_EDGE", default=True)
 MIN_EDGE = env.float("MIN_EDGE", default=0.0)
+
+# How far ahead to price and publish. Seven days so "this weekend" resolves from
+# any day of the week — from a Monday, Sunday is six days out, and a shorter
+# horizon leaves the weekend button permanently empty.
+PREDICTION_HORIZON_DAYS = env.int("PREDICTION_HORIZON_DAYS", default=7)
 
 # --- Telegram -------------------------------------------------------------
 

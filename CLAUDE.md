@@ -169,6 +169,15 @@ can change window before committing to a league. Callback data is
 `pk:<span>:<menu|all|league_id>:<page>` — one prefix for the whole surface, so
 the span travels with every tap.
 
+**The horizon is one number, and four things have to agree on it.**
+`PREDICTION_HORIZON_DAYS` (7) is how far ahead picks are priced *and published*;
+fixture sync runs a day wider, and the odds sync matches it. Publishing only
+today — which it did until this was found — leaves the bot's Tomorrow and Fri-Sun
+views permanently empty: the picks exist, generated and then sitting unpublished
+until their own morning, so a feature built to show them can never have anything
+to show. Pushes still go out for today only; a notification per day for a week
+is how a bot gets muted.
+
 **Date spans** — `access.span_dates` resolves "today" / "tomorrow" / "weekend"
 to a date pair. Weekend means Friday–Sunday, and resolves to the *coming*
 weekend Monday–Thursday but the one in progress Friday–Sunday: people ask for

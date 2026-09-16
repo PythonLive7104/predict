@@ -358,3 +358,79 @@ class EdgeGateTests(TestCase):
         make_prediction(self._fixture(), confidence=40, odds="3.00")   # edge +20%
 
         self.assertEqual(publish_daily()["total"], 0)
+
+
+@override_settings(MIN_PUBLISH_CONFIDENCE=55, PUBLISH_ON_EDGE=True, MIN_EDGE=0.0,
+                   PREDICTION_HORIZON_DAYS=7)
+class PublishHorizonTests(TestCase):
+    """
+    Publishing only today left the bot's Tomorrow and Fri-Sun views permanently
+    empty. The picks existed — generated and then sat unpublished until their own
+    morning — so a feature built to show them could never have anything to show.
+    """
+
+    def setUp(self):
+        self.league = make_league()
+        self.n = 0
+
+    def _pick(self, days_ahead, confidence=70, odds="1.80"):
+        from django.utils import timezone
+
+        self.n += 1
+        fixture = make_fixture(
+            league=self.league,
+            home=make_team(f"H{self.n}"), away=make_team(f"A{self.n}"),
+            kickoff=timezone.now().replace(hour=12, minute=0, second=0, microsecond=0)
+                    + timedelta(days=days_ahead, minutes=self.n),
+        )
+        return make_prediction(fixture, confidence=confidence, odds=odds)
+
+    def test_picks_across_the_week_are_all_published(self):
+        from apps.predictions.tasks import publish_and_build_slips
+
+        for day in (0, 1, 3, 6):
+            self._pick(day)
+
+        result = publish_and_build_slips(notify=False)
+
+        self.assertEqual(result["total"], 4)
+        self.assertEqual(
+            Prediction.objects.filter(published_at__isnull=False).count(), 4
+        )
+
+    def test_only_today_is_pushed(self):
+        """A push per day for a week is how a bot gets muted."""
+        from unittest.mock import patch
+
+        from apps.predictions.tasks import publish_and_build_slips
+
+        self._pick(0)
+        self._pick(2)
+
+        with patch("apps.predictions.tasks.announce", return_value=[]) as announce:
+            publish_and_build_slips(notify=True)
+
+        # One call, carrying today's free count rather than the week's.
+        announce.assert_called_once()
+        self.assertEqual(announce.call_args.kwargs["published_free"], 1)
+
+    def test_the_horizon_is_respected(self):
+        from apps.predictions.tasks import publish_and_build_slips
+
+        self._pick(0)
+        self._pick(20)   # beyond any sensible horizon
+
+        result = publish_and_build_slips(notify=False, days_ahead=7)
+
+        self.assertEqual(result["total"], 1)
+
+    def test_rerunning_does_not_republish(self):
+        """`published_at__isnull=True` is the guard; a second run is a no-op."""
+        from apps.predictions.tasks import publish_and_build_slips
+
+        self._pick(1)
+        first = publish_and_build_slips(notify=False)
+        second = publish_and_build_slips(notify=False)
+
+        self.assertEqual(first["total"], 1)
+        self.assertEqual(second["total"], 0)
