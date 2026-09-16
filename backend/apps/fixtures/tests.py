@@ -445,3 +445,48 @@ class CupInclusionTests(TestCase):
         ids = line.split("=")[1].split(",")
         self.assertIn("39", ids)    # league
         self.assertIn("48", ids)    # cup
+
+
+class LeagueMatchSafetyTests(TestCase):
+    """
+    A wrong league does not announce itself — it quietly publishes picks on the
+    wrong competition, into a public record. Each case here was produced by the
+    original matcher against the real provider list.
+    """
+
+    NODES = [
+        {"league": {"id": 1229, "name": "Liga Women", "type": "League"},
+         "country": {"name": "Peru"}},
+        {"league": {"id": 281, "name": "Liga 1", "type": "League"},
+         "country": {"name": "Peru"}},
+        {"league": {"id": 320, "name": "3. Division", "type": "League"},
+         "country": {"name": "Cyprus"}},
+        {"league": {"id": 318, "name": "1. Division", "type": "League"},
+         "country": {"name": "Cyprus"}},
+    ]
+
+    def _run(self, *args):
+        out = StringIO()
+        with patch(
+            "apps.fixtures.management.commands.find_leagues.ApiFootballClient"
+        ) as client_cls:
+            client_cls.return_value.leagues.return_value = self.NODES
+            call_command("find_leagues", *args, stdout=out)
+        return out.getvalue()
+
+    def test_a_womens_league_is_never_matched_for_a_mens_one(self):
+        output = self._run("Liga 1")
+        self.assertNotIn("Liga Women", output)
+
+    def test_a_lower_tier_is_not_matched_for_a_top_one(self):
+        output = self._run("1. Division")
+        self.assertNotIn("3. Division", output)
+
+    def test_a_lower_tier_can_still_be_asked_for_by_name(self):
+        """Championship and 2. Bundesliga are deliberate choices, not accidents."""
+        output = self._run("3. Division")
+        self.assertIn("3. Division", output)
+
+    def test_no_match_is_reported_rather_than_a_wrong_one(self):
+        output = self._run("Bundesliga")
+        self.assertIn("Not matched", output)

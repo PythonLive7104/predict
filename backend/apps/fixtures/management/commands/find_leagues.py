@@ -37,7 +37,7 @@ TOP_50 = [
     ("Serie B", "Italy"), ("Primera Nacional", "Argentina"), ("Liga I", "Romania"),
     ("Primera División", "Bolivia"), ("Ligue 2", "France"),
     ("Premiership", "Scotland"), ("Pro League", "Saudi-Arabia"),
-    ("Division Profesional", "Bolivia"), ("Liga 1", "Peru"), ("Ligue 1", "Algeria"),
+    ("Liga 1", "Peru"), ("Ligue 1", "Algeria"),
     ("Primera División", "Venezuela"), ("League One", "England"),
     ("Premier League", "Egypt"), ("Super Liga", "Slovakia"), ("A-League", "Australia"),
 ]
@@ -128,24 +128,44 @@ class Command(BaseCommand):
         self.stdout.write(f"  API_FOOTBALL_LEAGUES={','.join(str(i) for i in found)}\n")
         self._report_cost(len(found))
 
-    @staticmethod
-    def _match(index, name, country):
+    # Never returned by a fuzzy match, whatever the similarity score. Each of
+    # these was actually produced by an earlier cutoff: "Liga 1, Peru" matched a
+    # women's league, "First Division, Cyprus" matched the third tier, and
+    # "Copa Sudamericana" matched Copa America. A wrong league does not announce
+    # itself — it quietly publishes picks on the wrong competition.
+    NEVER_MATCH = ("women", "u19", "u20", "u21", "u23", "youth", "reserve",
+                   "amateur", "friendl")
+    LOWER_TIER = ("2. ", "3. ", "second division", "third division",
+                  "segunda b", "tercera")
+
+    @classmethod
+    def _match(cls, index, name, country):
         key = (name.lower(), (country or "").lower())
         if key in index:
             return index[key]
 
-        # Same country, near-enough name: providers write "Primera División" and
-        # "Liga Profesional" for the same competition in different seasons.
-        if country:
-            same_country = {n: v for (n, c), v in index.items() if c == country.lower()}
-            close = difflib.get_close_matches(name.lower(), same_country, n=1, cutoff=0.6)
-            if close:
-                return same_country[close[0]]
-            return None
+        def acceptable(candidate: str) -> bool:
+            if any(bad in candidate for bad in cls.NEVER_MATCH):
+                return False
+            # A lower tier is only acceptable when it was asked for by name.
+            return not (
+                any(tier in candidate for tier in cls.LOWER_TIER)
+                and not any(tier in name.lower() for tier in cls.LOWER_TIER)
+            )
 
-        names = {n: v for (n, _c), v in index.items()}
-        close = difflib.get_close_matches(name.lower(), names, n=1, cutoff=0.7)
-        return names[close[0]] if close else None
+        if country:
+            pool = {
+                n: v for (n, c), v in index.items()
+                if c == country.lower() and acceptable(n)
+            }
+            # 0.75 rather than 0.6: the looser cutoff is what let "Liga 1" reach
+            # "Liga Women" once the country already matched.
+            close = difflib.get_close_matches(name.lower(), pool, n=1, cutoff=0.75)
+            return pool[close[0]] if close else None
+
+        pool = {n: v for (n, _c), v in index.items() if acceptable(n)}
+        close = difflib.get_close_matches(name.lower(), pool, n=1, cutoff=0.8)
+        return pool[close[0]] if close else None
 
     def _report_cost(self, leagues: int) -> None:
         """Breadth is cheap in code and not free in requests or tokens."""
