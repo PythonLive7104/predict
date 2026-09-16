@@ -60,7 +60,11 @@ esac
 
 # runbot deletes the webhook on startup. If anyone has run it, Telegram has
 # nowhere to deliver and queues updates in silence.
-if docker compose exec -T web python manage.py set_webhook --show 2>/dev/null | grep -q "url *: http"; then
+#
+# Checked by exit code, not by grepping prose — the previous version matched
+# against the printed URL and reported a perfectly healthy webhook as missing
+# for a week, which cost more trust than the check was worth.
+if docker compose exec -T web python manage.py set_webhook --show >/dev/null 2>&1; then
   ok "Telegram webhook registered"
 else
   bad "Telegram webhook NOT registered — fix: docker compose exec web python manage.py set_webhook"

@@ -53,19 +53,34 @@ class Command(BaseCommand):
             await bot.session.close()
 
     async def _show(self, bot):
+        """
+        Print what Telegram holds, and exit non-zero when nothing is registered.
+
+        The exit code is the point: a script asking "is the webhook up?" should
+        not have to grep prose, which is what deploy.sh did and why it reported a
+        healthy webhook as missing for a week.
+        """
         info = await bot.get_webhook_info()
         self.stdout.write(f"  url            : {info.url or '(none)'}")
         self.stdout.write(f"  pending updates: {info.pending_update_count}")
         self.stdout.write(f"  custom cert    : {info.has_custom_certificate}")
         if info.last_error_message:
-            # This is where a bad TLS chain or a 403 from our own view shows up,
-            # and it is the single most useful line when a webhook "just doesn't
-            # work" — Telegram reports the failure here, not to us.
+            # Where a bad TLS chain or a 403 from our own view shows up —
+            # Telegram reports delivery failures here and nowhere else.
+            #
+            # It is also sticky: the last error stays until a delivery succeeds,
+            # so one from days ago says nothing about now. Dated for that reason.
             self.stdout.write(
                 self.style.WARNING(
                     f"  last error     : {info.last_error_message} ({info.last_error_date})"
                 )
             )
+            self.stdout.write(
+                "                   (sticky — clears on the next successful delivery)"
+            )
+
+        if not info.url:
+            raise CommandError("No webhook registered.")
 
     async def _register(self, bot, options):
         url = options["url"] or settings.TELEGRAM_WEBHOOK_URL

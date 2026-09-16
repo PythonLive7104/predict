@@ -286,3 +286,52 @@ class LeagueFilterTests(TestCase):
                               "today", 0)
         texts = [b.text for row in menu.inline_keyboard for b in row]
         self.assertTrue(any("Tomorrow" in t for t in texts))
+
+
+class WebhookShowTests(TestCase):
+    """
+    `--show` is what deploy.sh asks "is the webhook up?". Grepping its prose
+    reported a healthy webhook as missing for a week, so the answer is the exit
+    code now.
+    """
+
+    def _show(self, url, last_error=None):
+        from io import StringIO
+        from unittest.mock import AsyncMock, patch
+
+        from django.core.management import call_command
+
+        info = type("Info", (), {
+            "url": url, "pending_update_count": 0, "has_custom_certificate": False,
+            "last_error_message": last_error, "last_error_date": "2026-09-14",
+        })()
+        bot = AsyncMock()
+        bot.get_webhook_info = AsyncMock(return_value=info)
+        bot.session.close = AsyncMock()
+
+        out = StringIO()
+        with patch("apps.bot.management.commands.set_webhook.get_bot", return_value=bot):
+            call_command("set_webhook", "--show", stdout=out)
+        return out.getvalue()
+
+    def test_a_registered_webhook_succeeds(self):
+        output = self._show("https://example.com/hooks/telegram/")
+        self.assertIn("https://example.com/hooks/telegram/", output)
+
+    def test_no_webhook_raises(self):
+        from django.core.management.base import CommandError
+
+        with self.assertRaises(CommandError):
+            self._show("")
+
+    def test_a_stale_error_does_not_fail_the_check(self):
+        """
+        Telegram keeps the last error until a delivery succeeds, so one from days
+        ago says nothing about now — and must not be read as an outage.
+        """
+        output = self._show(
+            "https://example.com/hooks/telegram/",
+            last_error="Wrong response from the webhook: 502 Bad Gateway",
+        )
+        self.assertIn("sticky", output)
+        self.assertIn("502", output)
