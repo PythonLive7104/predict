@@ -42,6 +42,19 @@ TOP_50 = [
     ("Premier League", "Egypt"), ("Super Liga", "Slovakia"), ("A-League", "Australia"),
 ]
 
+# Cups are excluded from --top50 because they have no table and thin rating
+# history. But a midweek cup round is most of what is played that night, and a
+# slate that goes empty on cup nights looks broken however defensible the reason.
+MAJOR_CUPS = [
+    ("UEFA Champions League", "World"), ("UEFA Europa League", "World"),
+    ("UEFA Europa Conference League", "World"),
+    ("FA Cup", "England"), ("League Cup", "England"),
+    ("Copa del Rey", "Spain"), ("Coppa Italia", "Italy"),
+    ("DFB Pokal", "Germany"), ("Coupe de France", "France"),
+    ("Copa Libertadores", "World"), ("Copa Sudamericana", "World"),
+    ("Copa Do Brasil", "Brazil"), ("Copa Argentina", "Argentina"),
+]
+
 
 class Command(BaseCommand):
     help = "Look up API-Football league ids by name, ready for API_FOOTBALL_LEAGUES"
@@ -50,14 +63,18 @@ class Command(BaseCommand):
         parser.add_argument("names", nargs="*", help="League names to search for.")
         parser.add_argument("--top50", action="store_true",
                             help="Resolve the Opta top-50 list built into this command.")
+        parser.add_argument("--include-cups", action="store_true",
+                            help="Add the major cup competitions. A midweek cup round "
+                                 "is most of what is played that night.")
         parser.add_argument("--type", default="League",
                             help="League or Cup (default League) — Cup competitions "
                                  "have no table and thinner rating history.")
 
     def handle(self, *args, **options):
         wanted = TOP_50 if options["top50"] else [(n, None) for n in options["names"]]
-        if not wanted:
-            raise CommandError("Pass league names, or --top50.")
+        cups = MAJOR_CUPS if options["include_cups"] else []
+        if not wanted and not cups:
+            raise CommandError("Pass league names, --top50, or --include-cups.")
 
         self.stdout.write("Fetching the full league list (1 request)…")
         try:
@@ -65,11 +82,16 @@ class Command(BaseCommand):
         except ApiFootballError as exc:
             raise CommandError(str(exc)) from exc
 
-        # (name, country) -> id, plus a flat name index for fuzzy fallback.
+        # With cups requested the type filter has to admit both, so matching is
+        # done against everything and the type is checked per entry instead.
+        allowed = {options["type"]} if options["type"] else set()
+        if cups:
+            allowed.add("Cup")
+
         index = {}
         for node in everything:
             league, country = node["league"], (node.get("country") or {})
-            if options["type"] and league.get("type") != options["type"]:
+            if allowed and league.get("type") not in allowed:
                 continue
             index[(league["name"].lower(), (country.get("name") or "").lower())] = (
                 league["id"], league["name"], country.get("name") or "",
@@ -80,7 +102,7 @@ class Command(BaseCommand):
         self.stdout.write(f"  {'-' * 60}")
 
         found, missing = [], []
-        for name, country in wanted:
+        for name, country in list(wanted) + list(cups):
             hit = self._match(index, name, country)
             if hit is None:
                 missing.append(f"{name} ({country})" if country else name)

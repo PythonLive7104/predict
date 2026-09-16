@@ -398,3 +398,50 @@ class FindLeaguesTests(TestCase):
     def test_refuses_with_no_input(self):
         with self.assertRaises(CommandError):
             call_command("find_leagues", stdout=StringIO())
+
+
+class CupInclusionTests(TestCase):
+    """
+    A midweek cup round is most of what is played that night. Excluding cups is
+    right for the ratings and wrong for the product: the slate goes empty and
+    looks broken, whatever the reason.
+    """
+
+    NODES = [
+        {"league": {"id": 39, "name": "Premier League", "type": "League"},
+         "country": {"name": "England"}},
+        {"league": {"id": 48, "name": "League Cup", "type": "Cup"},
+         "country": {"name": "England"}},
+        {"league": {"id": 2, "name": "UEFA Champions League", "type": "Cup"},
+         "country": {"name": "World"}},
+    ]
+
+    def _run(self, *args):
+        out = StringIO()
+        with patch(
+            "apps.fixtures.management.commands.find_leagues.ApiFootballClient"
+        ) as client_cls:
+            client_cls.return_value.leagues.return_value = self.NODES
+            call_command("find_leagues", *args, stdout=out)
+        return out.getvalue()
+
+    def test_cups_are_still_excluded_by_default(self):
+        output = self._run("--top50")
+        self.assertIn("39", output)
+        self.assertNotIn("League Cup", output)
+
+    def test_include_cups_adds_them(self):
+        output = self._run("--top50", "--include-cups")
+        self.assertIn("League Cup", output)
+        self.assertIn("UEFA Champions League", output)
+
+    def test_cups_can_be_taken_on_their_own(self):
+        output = self._run("--include-cups")
+        self.assertIn("League Cup", output)
+
+    def test_the_env_line_carries_both(self):
+        output = self._run("--top50", "--include-cups")
+        line = [l for l in output.splitlines() if "API_FOOTBALL_LEAGUES=" in l][0]
+        ids = line.split("=")[1].split(",")
+        self.assertIn("39", ids)    # league
+        self.assertIn("48", ids)    # cup
